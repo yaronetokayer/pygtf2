@@ -10,9 +10,9 @@ setup(
     url='https://github.com/yaronetokayer/pygtf2',
     packages=find_packages(),
     install_requires=[
-        'numpy>=2.3',
-        'scipy>=1.15',
-        'numba>=0.61',
+        "numpy>=2.2,<2.3",
+        "scipy>=1.15",       # SciPy 1.15 works with NumPy 2.x
+        "numba>=0.61.2",     # pairs with NP<=2.2
         'matplotlib>=3.10',
         'tqdm>=4.67'
     ],
