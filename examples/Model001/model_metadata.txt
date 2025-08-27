@@ -1,0 +1,38 @@
+Model 001 Metadata
+========================================
+
+_init:
+    _Mvir: 3000000000.0
+    _alpha: 4.0
+    _beta: 4.0
+    _cvir: 20.0
+    _gamma: 0.1
+    _z: 0.0
+    profile: abg
+grid:
+    _ngrid: 200
+    _rmax: 200.0
+    _rmin: 0.01
+io:
+    _base_dir: /Users/yaronetokayer/YaleDrive/Research/SIDM/pygtfcode/examples
+    _chatter: True
+    _drho_prof: 0.1
+    _drho_tevol: 0.01
+    _model_no: 1
+    _nlog: 100000
+    _overwrite: True
+prec:
+    _eps_dr: 1e-12
+    _eps_dt: 0.001
+    _eps_du: 0.001
+    _epsabs: 1e-06
+    _epsrel: 1e-06
+    _max_iter_cr: 10
+    _max_iter_dr: 20000
+sim:
+    _a: 2.256758
+    _b: 1.38
+    _c: 0.75
+    _rho_c_halt: 1500.0
+    _sigma_m: 10.0
+    _t_halt: 1000.0
