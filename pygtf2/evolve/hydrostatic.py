@@ -3,61 +3,55 @@ from numba import njit, float64, types
 
 def revirialize(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.ndarray, float] | None:
     """
-    Re-virializes the system state by solving for radius adjustments and updating physical quantities.
+    Multi-species re-virialization
+    Solves for radius adjustments and updates physical quantities
+    Assumes all species have aligned radial bins
 
-    Arguments
-    ---------
-    r : ndarray
-        Radial coordinates.
-    rho : ndarray
-        Density values.
-    p : ndarray
-        Pressure values.
-    m : ndarray
-        Total enclosed mass at each radial grid point, including baryons/perturbers.
+    Parameters
+    ----------
+    r : ndarray, shape (s, N+1)
+        Edge radii per species.
+    rho : ndarray, shape (s, N)
+        Shell densities per species.
+    p : ndarray, shape (s, N)
+        Shell pressures per species.
+    m_tot : ndarray, shape (N+1,)
+        Total enclosed mass at edges (shared across species), computed on the
+        aligned grid *before* calling this routine.
 
     Returns
     -------
-    tuple or None
-        Tuple containing:
-            - r_new : ndarray
-                Updated radial coordinates.
-            - rho_new : ndarray
-                Updated density values.
-            - p_new : ndarray
-                Updated pressure values.
-            - v2_new : ndarray
-                Updated velocity dispersion.
-            - dr_max_new : float
-                Maximum absolute change in radius.
-        Returns None if any updated velocity dispersion is unphysical (negative).
+    r_new, rho_new, p_new, dr_max : tuple
+        Updated fields per species and the global maximum |dr/r| across species.
 
     Notes
     -----
-    The function solves a tridiagonal system to compute radius corrections, then updates
-    density, pressure, and velocity dispersion accordingly. If any velocity dispersion
-    becomes negative, the function returns None.
+    This function solves a tridiagonal system to compute radius corrections, then updates
+    density, pressure, and velocity dispersion accordingly. If any radii cross, the function returns None.
     """
+    s, _ = r.shape
+    r_new   = np.empty_like(r)
+    rho_new = np.empty_like(rho)
+    p_new   = np.empty_like(p)
+    dr_max = 0.0
 
-    # Solve for corrections to r
-    a, b, c, y = build_tridiag_system(r, rho, p, m_tot)
-    x = solve_tridiagonal_frank(a, b, c, y)
+    for k in range(s):
+        a, b, c, y = build_tridiag_system(r[k], rho[k], p[k], m_tot)
+        xk = solve_tridiagonal_frank(a, b, c, y)
+        rk, pk, rhok = _update_r_p_rho(r[k], xk, p[k], rho[k])
+        if np.any((rk[1:] - rk[:-1]) <= 0.0):
+            return None
+        r_new[k]   = rk
+        p_new[k]   = pk
+        rho_new[k] = rhok
+        dr_max = max(dr_max, float(np.max(np.abs(xk))))
 
-    # Update arrays accordingly
-    r_new, p_new, rho_new = _update_r_p_rho(r, x, p, rho)
-
-    # Check for shell crossing
-    if np.any((r_new[1:] - r_new[:-1]) <= 0.0):
-        return None  
-    
-    dr_max_new = float(np.max(np.abs(x)))
-
-    return r_new, rho_new, p_new, dr_max_new
+    return r_new, rho_new, p_new, dr_max
 
 @njit(float64[:](float64[:]), cache=True, fastmath=True)
 def compute_mass(m) -> np.ndarray:
     """
-    Placeholder funcion to compute mass used in build_tridiag_system.
+    Placeholder function to compute mass used in build_tridiag_system.
     Accounts for baryons, perturbers, etc. in future implementations.
 
     Arguments
@@ -79,7 +73,7 @@ def compute_mass(m) -> np.ndarray:
 def _update_r_p_rho(r, x, p, rho) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Updates r, and then finds p, rho, and v2 based on exact volume ratios.
-    Ensured positivity and stability.
+    Ensures positivity and stability.
 
     r: edge radii, shape (N+1,)
     x: interior stretch, x_j = dr_j / r_j for j=1..N-1, shape (N-1,)
@@ -170,7 +164,7 @@ def build_tridiag_system(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray]:
     return a, b, c, y
 
 @njit(float64[:](float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
-def solve_tridiagonal_frank(a, b, c, y):
+def solve_tridiagonal_frank(a, b, c, y) -> np.ndarray:
     """
     Solve a tridiagonal system Ax = y using the Thomas algorithm.
     This is Frank's implementation from numerical recipes.

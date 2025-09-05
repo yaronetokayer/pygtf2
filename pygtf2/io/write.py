@@ -1,5 +1,5 @@
 import numpy as np
-from pygtfcode.parameters.constants import Constants as const
+from pygtf2.parameters.constants import Constants as const
 import os
 
 def make_dir(state):
@@ -36,24 +36,52 @@ def write_metadata(state):
     io = state.config.io
     filename = os.path.join(io.base_dir, io.model_dir, f"model_metadata.txt")
 
-    def dump_attrs(obj, indent=0):
+    def dump_container(val, indent=0, key_name=None):
+        pad = " " * indent
         lines = []
-        for key in sorted(vars(obj)):
-            val = getattr(obj, key)
-            if hasattr(val, '__dict__'):  # it's a nested config object
-                lines.append(" " * indent + f"{key}:")
-                lines.extend(dump_attrs(val, indent + 4))
-            else:
-                lines.append(" " * indent + f"{key}: {val}")
+
+        def line(s): lines.append(pad + s)
+
+        # Dicts: print a header, then sorted keys
+        if isinstance(val, dict):
+            if key_name is not None:
+                line(f"{key_name}:")
+            for k in sorted(val.keys()):
+                lines.extend(dump_container(val[k], indent + 4, key_name=str(k)))
+            return lines
+
+        # Lists / tuples: index each item
+        if isinstance(val, (list, tuple)):
+            if key_name is not None:
+                line(f"{key_name}:")
+            for i, item in enumerate(val):
+                lines.extend(dump_container(item, indent + 4, key_name=f"[{i}]"))
+            return lines
+
+        # Objects with attributes: recurse into their __dict__
+        if hasattr(val, "__dict__"):
+            if key_name is not None:
+                line(f"{key_name}:")
+            # Sort attribute names for determinism
+            for attr in sorted(vars(val).keys()):
+                attr_val = getattr(val, attr)
+                lines.extend(dump_container(attr_val, indent + 4, key_name=attr))
+            return lines
+
+        # Scalars / everything else
+        if key_name is not None:
+            line(f"{key_name}: {val}")
+        else:
+            line(str(val))
         return lines
 
     with open(filename, "w") as f:
         f.write(f"Model {io.model_no:03d} Metadata\n")
         f.write("=" * 40 + "\n\n")
-        lines = dump_attrs(state.config)
-        f.write("\n".join(lines) + "\n")
+        for line in dump_container(state.config):
+            f.write(line + "\n")
 
-    if state.config.io.chatter:
+    if io.chatter:
         print(f"Model information written to model_metadata.txt")
 
 def write_log_entry(state, start_step):
@@ -103,6 +131,13 @@ def write_log_entry(state, start_step):
 def write_profile_snapshot(state, initialize=False):
     """ 
     Write full radial profiles to disk.
+    Assumes all radial bins are aligned.
+
+    Columns:
+        i, log_r, log_rmid,
+        m_tot, rho_tot, v2_tot, p_tot,
+        [for each species in state.labels in order:]
+            m[<label>], rho[<label>], v2[<label>], p[<label>], trelax[<label>]
 
     Arguments
     ---------
@@ -111,31 +146,65 @@ def write_profile_snapshot(state, initialize=False):
     initialize : bool
         If True, this is part of initializing the grid and should not increment the snapshot index.
     """
-    filename = os.path.join(state.config.io.base_dir, state.config.io.model_dir, f"profile_{state.snapshot_index}.dat")
+    io = state.config.io
+    filename = os.path.join(io.base_dir, io.model_dir, f"profile_{state.snapshot_index}.dat")
+
+    # Use species 0 for the r columns.
+    r_common    = state.r[0]
+    rmid_common = state.rmid[0]
+    N = r_common.size - 1
+    labels = list(state.labels)
+    s = len(labels)
+
+    # Build header
+    header_cols = [
+        f"{'i':>6}",
+        f"{'log_r':>13}",
+        f"{'log_rmid':>13}",
+        f"{'m_tot':>13}",
+        f"{'rho_tot':>13}",
+        f"{'v2_tot':>13}",
+        f"{'p_tot':>13}",
+    ]
+    # Per-species blocks
+    for name in labels:
+        header_cols.extend([
+            f"{'m['+name+']':>13}",
+            f"{'rho['+name+']':>13}",
+            f"{'v2['+name+']':>13}",
+            f"{'p['+name+']':>13}",
+            f"{'trelax['+name+']':>13}",
+        ])
+    header_line = "  ".join(header_cols) + "\n"
 
     with open(filename, "w") as f:
-        header = (
-            f"{'i':>6}  {'log_r':>12}  {'log_rmid':>12}  {'m':>12}  "
-            f"{'rho':>12}  {'v2':>12}  {'p':>12}  {'trelax':>12}  {'kn':>12}\n"
-        )
-        f.write(header)
-        for i in range(len(state.r) - 1):
-            f.write(
-                f"{i:6d}  "
-                f"{np.log10(state.r[i+1]):12.6e}  "
-                f"{np.log10(state.rmid[i]):12.6e}  "
-                f"{state.m[i+1]:12.6e}  "
-                f"{state.rho[i]:12.6e}  "
-                f"{state.v2[i]:12.6e}  "
-                f"{state.p[i]:12.6e}  "
-                f"{state.trelax[i]:12.6e}  "
-                f"{state.kn[i]:12.6e}\n"
-            )
+        f.write(header_line)
+
+        # Row writer (edge quantities use i+1)
+        for i in range(N):
+            row = [
+                f"{i:6d}",
+                f"{np.log10(r_common[i+1]): 13.6e}",
+                f"{np.log10(rmid_common[i]): 13.6e}",
+                f"{state.m_tot[i+1]: 13.6e}",
+                f"{state.rho_tot[i]: 13.6e}",
+                f"{state.v2_tot[i]: 13.6e}",
+                f"{state.p_tot[i]: 13.6e}",
+            ]
+            # Per-species fields
+            for k in range(s):
+                row.extend([
+                    f"{state.m[k, i+1]: 13.6e}",
+                    f"{state.rho[k, i]: 13.6e}",
+                    f"{state.v2[k, i]: 13.6e}",
+                    f"{state.p[k, i]: 13.6e}",
+                    f"{state.trelax[k, i]: 13.6e}",
+                ])
+            f.write("  ".join(row) + "\n")
     
     append_snapshot_conversion(state)
 
-    if state.config.io.chatter:
-        if state.step_count == 0:
+    if io.chatter and state.step_count == 0:
             print("Initial profiles written to disk.")
 
     if not initialize: # Do not increment if this is part of intializing the grid
@@ -162,7 +231,7 @@ def append_snapshot_conversion(state):
     new_line = (
         f"{index:6d}  "
         f"{state.t:12.6e}  "
-        f"{state.t * state.char.t0 * const.sec_to_Gyr:12.6e}  "
+        f"{state.t * state.char.t0:12.6e}  "
         f"{state.step_count:10d}\n"
     )
 

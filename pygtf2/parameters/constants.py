@@ -11,6 +11,7 @@ class Constants:
 
     # Conversion of megaparsec to centimeters
     Mpc_to_cm = 3.086e24
+    kpc_to_km = 3.086e16
 
     # Conversion of solar mass to grams
     Msun_to_gram = 1.99e33

@@ -1,26 +1,28 @@
 from scipy.integrate import quad
 import numpy as np
 
-def chi(config):
+def chi(prec, init):
     """
     Computes the chi parameter used in the ABG profile normalization.
 
     Parameters
     ----------
-    config : Config
-        The simulation configuration object. Must use an ABG profile.
+    prec : PrecisionParams
+        The simulation PrecisionParams object
+    init: InitParams
+        Initial profile parameters object for the most massive component.  Must use an ABG profile.
 
     Returns
     -------
     float
         The value of chi.
     """
-    alpha = float(config.init.alpha)
-    beta = float(config.init.beta)
-    gamma = float(config.init.gamma)
+    alpha = float(init.alpha)
+    beta = float(init.beta)
+    gamma = float(init.gamma)
     expo = (beta - gamma) / alpha
-    epsabs = float(config.prec.epsabs)
-    epsrel = float(config.prec.epsrel)
+    epsabs = float(prec.epsabs)
+    epsrel = float(prec.epsrel)
 
     def chi_integrand(x):
         return x**(2.0 - gamma) / (1.0 + x**alpha)**expo
@@ -43,7 +45,7 @@ def _abg_velocity_integrand(x, alpha, beta, gamma, epsabs, epsrel):
     rho_x = x**(-gamma) / (1.0 + x**alpha)**((beta - gamma) / alpha)
     return rho_x * chi_x / x**2
 
-def menc_abg(r, config):
+def menc_abg(r, init, prec):
     """
     Enclosed mass profile for the alpha-beta-gamma profile.
 
@@ -51,19 +53,21 @@ def menc_abg(r, config):
     ----------
     r : float or ndarray
         Radius in units of r_s.
-    config : Config
-        The simulation configuration object (must use ABG profile).
+    prec : PrecisionParams
+        The simulation PrecisionParams object
+    init: InitParams
+        Initial profile parameters object.
 
     Returns
     -------
     M_enc : float or ndarray
         Enclosed mass in units of Mvir.
     """
-    alpha = float(config.init.alpha)
-    beta  = float(config.init.beta)
-    gamma = float(config.init.gamma)
-    epsabs = float(config.prec.epsabs)
-    epsrel = float(config.prec.epsrel)
+    alpha = float(init.alpha)
+    beta  = float(init.beta)
+    gamma = float(init.gamma)
+    epsabs = float(prec.epsabs)
+    epsrel = float(prec.epsrel)
 
     r = np.asarray(r, dtype=np.float64)
     out = np.empty(r.shape, dtype=np.float64)
@@ -75,7 +79,7 @@ def menc_abg(r, config):
 
     return out if out.size > 1 else float(out[0])
 
-def sigr_abg(r, config):
+def sigr_abg(r, init, prec):
     """
     Velocity dispersion squared for alpha-beta-gamma profile at radius r.
 
@@ -83,20 +87,22 @@ def sigr_abg(r, config):
     ----------
     r : float or ndarray
         Radius in units of r_s.
-    config : Config
-        The simulation configuration object (must use ABG profile).
+    init: InitParams
+        Initial profile parameters object.
+    prec : PrecisionParams
+        The simulation PrecisionParams object.
 
     Returns
     -------
     v2 : float or ndarray
         Velocity dispersion squared.
     """
-    alpha = float(config.init.alpha)
-    beta  = float(config.init.beta)
-    gamma = float(config.init.gamma)
+    alpha = float(init.alpha)
+    beta  = float(init.beta)
+    gamma = float(init.gamma)
 
-    epsabs = float(config.prec.epsabs)
-    epsrel = float(config.prec.epsrel)
+    epsabs = float(prec.epsabs)
+    epsrel = float(prec.epsrel)
 
     r = np.asarray(r, dtype=np.float64)
     out = np.empty(r.shape, dtype=np.float64)

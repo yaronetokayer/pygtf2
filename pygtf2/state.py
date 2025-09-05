@@ -1,5 +1,5 @@
 import numpy as np
-from pygtfcode.parameters.constants import Constants as const
+from pygtf2.parameters.constants import Constants as const
 import pprint
 from pathlib import Path
 
@@ -60,14 +60,30 @@ class State:
     """
 
     def __init__(self, config):
-        from pygtfcode.io.write import make_dir, write_metadata, write_profile_snapshot
+        from pygtf2.io.write import make_dir, write_metadata, write_profile_snapshot
 
         self.config = config
+        if config.s < 1:
+            raise ValueError("No species defined; add at least one before instantiating a State.")
+        self._set_species_hierarchy()
         self.char = self._set_param()
-        if self.config.init.profile == 'truncated_nfw': # Numerical integrations for non-analytic truncated NFW profile
-            from pygtfcode.profiles.truncated_nfw import integrate_potential, generate_rho_lookup
-            self.rho_interp = generate_rho_lookup(config)
-            self.rcut, self.config.grid.rmax, self.pot_interp, self.pot_rad, self.pot = integrate_potential(config, self.rho_interp)
+
+        # Check for truncated NFW profile - numerically integrate potential
+        for name in self.labels:
+            first = True
+            if self.config.spec[name].init.profile == 'truncated_nfw':
+                print(f"Computing truncated NFW potential for species {name}:")
+                from pygtf2.profiles.truncated_nfw import integrate_potential, generate_rho_lookup
+                prec = config.prec
+                chatter = config.io.chatter
+                init = config.spec[name].init
+                if first:
+                    self.rho_interp, self.rcut, self.pot_interp, self.pot_rad, self.pot = ({} for _ in range(5))
+                self.rho_interp[name] = generate_rho_lookup(init, prec, chatter)
+                self.rcut[name], config.grid.rmax, self.pot_interp[name], self.pot_rad[name], self.pot[name] = integrate_potential(
+                    init, config.grid, chatter, self.rho_interp[name]
+                    )
+                first = False
 
     @classmethod
     def from_config(cls, config):
@@ -84,7 +100,7 @@ class State:
         State
             A new State object initialized with the given configuration.
         """
-        from pygtfcode.io.write import make_dir, write_metadata, write_profile_snapshot
+        from pygtf2.io.write import make_dir, write_metadata, write_profile_snapshot
 
         state = cls(config)
         state.reset()                                    # Initialize all state variables
@@ -95,9 +111,10 @@ class State:
 
         return state
 
+    """
     @classmethod
     def from_dir(cls, model_dir: str, snapshot: None | int = None):
-        """
+        ""
         Create a State object from an existing model directory.
 
         Parameters
@@ -111,15 +128,15 @@ class State:
         -------
         State
             A new State object initialized with data from the specified directory.
-        """
+        ""
         # Check directory exists
         p = Path(model_dir)
         if not p.is_dir():
             raise FileNotFoundError(f"Model directory does not exist: {p}")
         
         # Imports
-        from pygtfcode.io.read import import_metadata, load_snapshot_bundle
-        from pygtfcode.config import Config
+        from pygtf2.io.read import import_metadata, load_snapshot_bundle
+        from pygtf2.config import Config
 
         meta = import_metadata(p)
         snapshot_bundle = load_snapshot_bundle(p, snapshot=snapshot)
@@ -169,59 +186,151 @@ class State:
             print("State loaded.")
 
         return state
+        """
+
+    def _set_species_hierarchy(self):
+        """
+        Validate species and set the species hierarchy
+        Populates:
+            self.labels : (s,) array[str]
+            self.m_part : (s,) float64
+            self.frac   : (s,) float64  (sums to 1 within tol; renormalized if needed)
+        """
+        config = self.config
+        spec = config.spec
+        s = config.s
+    
+        if s < 1:
+            raise ValueError("No species defined in Config.spec.")
+
+        labels_list = []
+        m_part = np.empty(s, dtype=np.float64)
+        frac   = np.empty(s, dtype=np.float64)
+
+        # Import species parameters
+        for ind, label in enumerate(spec):
+            labels_list.append(label)
+            m_part[ind] = spec[label].m_part
+            frac[ind] = spec[label].frac
+        labels = np.array(labels_list, dtype=object)
+
+        # Validate fractions
+        if np.any(frac <= 0.0):
+            negs = labels[frac <= 0.0]
+            raise ValueError(f"All species mass fractions must be > 0. Offenders: {list(negs)}")
+
+        sfrac = float(frac.sum())
+        if not np.isfinite(sfrac) or sfrac <= 0.0:
+            raise ValueError("Species mass fractions sum is non-finite or <= 0.")
+        if abs(sfrac - 1.0) > 0.0:
+            # If close, renormalize; if far, error out.
+            if abs(sfrac - 1.0) <= 1e-5:
+                frac = frac / sfrac
+            else:
+                raise ValueError(f"Mass fractions must sum to 1.0 (got {sfrac:.6g}).")
+
+        # Sort by descending particle mass
+        order = np.argsort(-m_part)
+        m_part = m_part[order]
+        frac   = frac[order]
+        labels = labels[order]
+
+        # Store as attributes
+        self.labels = labels           # array[str]
+        self.m_part = m_part           # array[float64]
+        self.frac   = frac             # array[float64]
+        self.mrat   = m_part / m_part[0]
 
     def _set_param(self):
         """
-        Compute and set characteristic physical quantities based on InitParams.
+        Compute and set characteristic physical quantities.
+        lnL, mrat, 
         """
-        from pygtfcode.parameters.char_params import CharParams
-        from pygtfcode.profiles.nfw import fNFW
+        from pygtf2.parameters.char_params import CharParams
+        from pygtf2.profiles.nfw import fNFW
 
-        if self.config.io.chatter:
+        config = self.config
+        if config.io.chatter:
             print("Computing characteristic parameters for simulation...")
-        init = self.config.init # Access the InitParams object from config
-        sim = self.config.sim # Access the SimParams object from config
+        sim = config.sim
 
         char = CharParams() # Instantiate CharParams object
 
-        # Ensure double point precision
-        Mvir  = float(init.Mvir)
-        cvir  = float(init.cvir)
-        z     = float(init.z)
+        #--- Set r_s and m_s ---
+        mtot  = float(config.mtot)
 
-        rvir = 0.169 * (Mvir / 1.0e12)**(1.0/3.0)
+        # Choose initial profile of most massive particle mass for setting scales
+        kref = int(np.argmax(self.m_part))
+        label_ref = self.labels[kref]
+        init_ref = config.spec[label_ref].init
+        rs      = init_ref.r_s
+        profile = init_ref.profile
+
+        # --- Virial radius (global, from mtot) ---
+        z = float(getattr(init_ref, "z", 0.0))
+        rvir = 0.169 * (mtot / 1.0e12)**(1.0/3.0)
         rvir *= (float(const.Delta_vir) / 178.0)**(-1.0/3.0)
         rvir *= (_xH(z, const) / (100.0 * float(const.xhubble)))**(-2.0/3.0)
         rvir /= float(const.xhubble)
 
-        Mvir_h = Mvir / float(const.xhubble)
-        char.fc = float(fNFW(cvir))
-        char.r_s = rvir / cvir
+        if profile in ['abg']:
+            from pygtf2.profiles.abg import chi
+            char.chi = float(chi(self.config.prec, init_ref))
 
-        if init.profile != 'abg':
-            char.m_s = Mvir_h / char.fc
-            
-        else:
-            from pygtfcode.profiles.abg import chi
-            char.chi = float(chi(self.config))
-            char.m_s = Mvir_h / char.chi
-            char.r_s *= ( char.fc / char.chi )**(1.0/3.0)
+            if rs is not None: # User specified scale radius
+                char.r_s = float(rs)
+                cvir = rvir / rs
+            else: # User specified concentration parameter
+                cvir = init_ref.cvir
+                if cvir is None:
+                    raise RuntimeError("Either cvir or rs must be specified in the initial profile")
+                char.fc = float(fNFW(cvir))
+                char.r_s = (rvir / cvir) * ( char.fc / char.chi )**(1.0/3.0)
 
+            char.m_s = mtot
+                
+        elif profile in ['nfw', 'truncated_nfw']:
+            if rs is None: # cvir is specified
+                cvir = init_ref.cvir
+                if cvir is None:
+                    raise RuntimeError("Either cvir or rs must be specified in the initial profile")
+                char.r_s = rvir / cvir
+
+            else: # rs is specified
+                char.r_s = float(rs)
+                cvir = rvir / rs
+
+            char.fc = float(fNFW(cvir))
+            char.m_s = mtot / float(const.xhubble) / char.fc
+
+        #--- Set rho_s and v0 ---
         char.rho_s = char.m_s / ( 4.0 * np.pi * char.r_s**3 )
         char.v0 = float(np.sqrt(const.gee * char.m_s / char.r_s))
-        sigma0 = 4.0 * np.pi * char.r_s**2 / char.m_s # In Mpc^2 / Msun^2
-        char.sigma0 = sigma0 * float(const.Mpc_to_cm)**2 / float(const.Msun_to_gram) # In cm^2 / g
 
-        v0_cgs = char.v0 * 1.0e5
-        rho_s_cgs = char.rho_s * float(const.Msun_to_gram) / float(const.Mpc_to_cm)**3
-        char.t0 = 1.0 / (float(sim.a) * float(sim.sigma_m) * v0_cgs * rho_s_cgs)
-        char.sigma_m_char = float(sim.sigma_m) / char.sigma0 # sigma_m in dimensionless form
+        #--- Set Coulomb logarithm and t0 --- 
+        s = config.s
+        m_part = self.m_part
+        lnL = np.empty((s,s), dtype=np.float64)
+        for i in range(s):
+            for j in range(s):
+                lnL[i,j] = np.log(sim.lnL_param * 2.0 * char.m_s) / (m_part[i] + m_part[j])
+
+        lnL_term = lnL[0,0] if s == 1 else lnL[1,s - 1]
+
+        t0 = char.v0**3.0 / (12.0 * np.pi * const.gee**2.0 * m_part[kref] * char.rho_s * lnL_term)
+        char.t0 = t0 * const.kpc_to_km * const.sec_to_Gyr
+
+        char.lnL = lnL / lnL_term
+
+        #--- Set luminosity calculation parameter ---
+        char.c1 = 1.0 / np.sqrt(3.0 * np.pi)
+        char.c2 = (np.sqrt(2.0) / 9.0) * sim.alpha * sim.beta * sim.b
 
         return char  # Store the CharParams object in config
     
     def _setup_grid(self):
         """
-        Constructs the radial grid in log-space between rmin and rmax.
+        Constructs the Lagrangian radial grid in log-space between rmin and rmax.
 
         Parameters
         ----------
@@ -230,23 +339,28 @@ class State:
 
         Returns
         -------
-        r : ndarray of shape (ngrid + 1,)
-            Radial Lagrangian grid points, with r[0] = 0 and the rest spaced
-            logarithmically between rmin and rmax.
+        r : ndarray, shape (s, ngrid+1)
+            r[k, :] are the edge radii for species k, with r[k,0] = 0.0 and
+            r[k,1:] logarithmically spaced between rmin and rmax (common grid).
         """
-        if self.config.io.chatter:
-            print("Setting up radial grid...")
+        config = self.config
+        if config.io.chatter:
+            print("Setting up radial grids for all species...")
 
-        rmin  = float(self.config.grid.rmin)
-        rmax  = float(self.config.grid.rmax)
-        ngrid = int(self.config.grid.ngrid)
+        rmin  = float(config.grid.rmin)
+        rmax  = float(config.grid.rmax)
+        ngrid = int(config.grid.ngrid)
 
         xlgrmin = float(np.log10(rmin))
         xlgrmax = float(np.log10(rmax))
 
-        r = np.empty(ngrid + 1, dtype=np.float64)
-        r[0] = 0.0
-        r[1:] = 10.0 ** np.linspace(xlgrmin, xlgrmax, ngrid, dtype=np.float64)
+        # Common log-spaced edges (excluding the central point which we set to 0)
+        edges = np.empty(ngrid + 1, dtype=np.float64)
+        edges[0] = 0.0
+        edges[1:] = 10.0 ** np.linspace(xlgrmin, xlgrmax, ngrid, dtype=np.float64)
+
+        # Tile/broadcast for each species: r[k, :] = edges
+        r = np.broadcast_to(edges, (config.s, ngrid + 1)).copy()
 
         return r
     
@@ -261,57 +375,90 @@ class State:
             - p: Pressure in each shell
             - u: Internal energy in each shell
             - v2: Velocity dispersion squared in each shell
-            - kn: Knudsen number in each shell
-            - maxvel: maximum velocity dispersion
-            - minkn: minimum Knudsen number
+            - trelax: Relaxation time in each shell
         """
-        from pygtfcode.profiles.profile_routines import menc, sigr
-
-        if self.config.io.chatter:
+        from pygtf2.profiles.profile_routines import menc, sigr
+        config = self.config
+        prec = config.prec
+        spec = config.spec
+        labels = self.labels
+        frac = self.frac
+        chatter = config.io.chatter
+        if chatter:
             print("Initializing profiles...")
 
         r = self.r.astype(np.float64, copy=False)
-        r_mid = 0.5 * (r[1:] + r[:-1])          # Midpoint of each shell
-        dr3 = r[1:]**3 - r[:-1]**3              # Volume difference per shell
+        r_mid = 0.5 * (r[:, 1:] + r[:, :-1])          # Midpoint of each shell
+        dr3 = r[:, 1:]**3 - r[:, :-1]**3              # Volume difference per shell
 
         m = np.zeros_like(r, dtype=np.float64)
-        m[1:] = menc(r[1:], self)             # m[i] at shell edges
+        v2 = np.zeros_like(r_mid, dtype=np.float64)
 
-        v2 = np.asarray(sigr(r_mid, self), dtype=np.float64)
-        rho = 3.0 * ( m[1:] - m[:-1] ) / dr3
-        p = rho * v2
+        # Compute m and v2 for all radial bins
+        for i, name in enumerate(labels):
+            init = spec[name].init
+
+            # kwargs needed for non-analytic truncated NFW profile
+            pot_rad = pot_interp = rho_interp = rcut = None
+            if init.profile == 'truncated_nfw':
+                pot_rad = self.pot_rad[name]
+                pot_interp = self.pot_interp[name]
+                rho_interp = self.rho_interp[name]
+                rcut = self.rcut[name]
+            
+            m_base = menc(self.r[i, 1:], init, prec, 
+                          chatter=chatter, pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp)
+            m[i, 1:] = frac[i] * m_base                 # Scale by mass fraction
+            v2[i, :] = sigr(r_mid[i, :], init, prec,
+                            chatter=chatter, grid=config.grid, rcut=rcut, 
+                            pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp)
+
+        # Rho, u, and p from equation of state
+        rho = 3.0 * ( m[:, 1:] - m[:, :-1] ) / dr3
         u = 1.5 * v2
-        kn = 1.0 / (self.char.sigma_m_char * np.sqrt(p))
+        p = rho * v2
+
+        # Central smoothing for NFW profile
+        for i, name in enumerate(labels):
+            if spec[name].init.profile == 'nfw':
+                r1 = r[i, 1]
+                rho_c_ideal = 1.0 / (r1 * (1.0 + r1)**2)
+                rho[i, 0] = 2.0 * rho_c_ideal - rho[i, 1]
+                dr_ratio = (r[i, 2] - r[i, 0]) / (r[i, 3] - r[i, 1])
+                p[i, 0] = p[i, 1] - dr_ratio * (p[i, 2] - p[i, 1])
+                v2[i, 0] = p[i, 0] / rho[i, 0]
+                u[i, 0] = 1.5 * v2[i, 0]
+
         trelax = 1.0 / (np.sqrt(v2) * rho)
 
-        # Apply central smoothing if using regular NFW profile (imode = 1)
-        # This helps reduce artificial gradients in innermost cell
-        if self.config.init.profile == "nfw":
-            r1 = r[1]
-            rho_c_ideal = 1.0 / (r1 * (1.0 + r1)**2)
-            rho[0] = 2.0 * rho_c_ideal - rho[1]
+        # Compute totals
+        m_tot   = m.sum(axis=0)
+        rho_tot = rho.sum(axis=0)
+        p_tot   = p.sum(axis=0)
+        v2_tot = p_tot / rho_tot
+        u_tot  = 1.5 * v2_tot
 
-            dr_ratio = (r[2] - r[0]) / (r[3] - r[1])
-            p[0] = p[1] - dr_ratio * (p[2] - p[1])
+        self.m          = m
+        self.rmid       = r_mid
+        self.rho        = rho
+        self.p          = p
+        self.u          = u
+        self.v2         = v2
+        self.trelax     = trelax
 
-            v2[0] = p[0] / rho[0]
-            u[0] = 1.5 * v2[0]
-
-        self.m = m
-        self.rmid = r_mid
-        self.rho = rho
-        self.p = p
-        self.u = u
-        self.v2 = v2
-        self.kn = kn
-        self.trelax = trelax
+        self.m_tot      = m_tot
+        self.rho_tot    = rho_tot
+        self.p_tot      = p_tot
+        self.v2_tot     = v2_tot
+        self.u_tot      = u_tot
 
     def _ensure_virial_equilibfrium(self):
         """
         Fine-tunes initial profile to ensure hydrostatic equilibrium.
         Iteratively runs revirialize() until max |dr/r| < eps_dr.
         """
-        from pygtfcode.evolve.hydrostatic import revirialize
+        from pygtf2.evolve.hydrostatic import revirialize
+        from pygtf2.evolve.realign import realign
         chatter = self.config.io.chatter
 
         if chatter:
@@ -320,29 +467,35 @@ class State:
         r_new = self.r.astype(np.float64, copy=True)
         rho_new = self.rho.astype(np.float64, copy=True)
         p_new = self.p.astype(np.float64, copy=True)
-        m = self.m.astype(np.float64, copy=False)
+        m_tot = self.m_tot.astype(np.float64, copy=False)
 
         eps_dr = float(self.config.prec.eps_dr)
 
         i = 0
         while True:
             i += 1
-            r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m)
+            r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot)
             if dr_max_new < eps_dr:
                 break
             if i >= 100:
                 raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
+            v2_new = p_new / rho_new
+            r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
             
-        v2_new = p_new / rho_new
         self.r = r_new
         self.rho = rho_new
         self.p = p_new
         self.v2 = v2_new
-
-        self.rmid = 0.5 * (r_new[1:] + r_new[:-1])
+        self.m = m_new
+        self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
         self.u = 1.5 * v2_new
-        self.kn = 1.0 / (self.char.sigma_m_char * np.sqrt(p_new))
         self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
+        
+        self.m_tot      = m_tot_new
+        self.rho_tot    = rho_new.sum(axis=0)
+        self.p_tot      = p_new.sum(axis=0)
+        self.v2_tot     = self.p_tot / self.rho_tot
+        self.u_tot      = 1.5 * self.v2_tot
 
         if chatter:
             print(f"Hydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
@@ -361,12 +514,11 @@ class State:
         self.t = 0.0                        # Current time in simulation units
         self.step_count = 0                 # Global integration step counter (never reset)
         self.snapshot_index = 0             # Counts profile output snapshots
-        self.dt = 1e-6                      # Initial time step (will be updated adaptively)
+        self.dt = 1e-7                      # Initial time step (will be updated adaptively)
         self.du_max = prec.eps_du           # Initialize the max du to upper limit
         self.dr_max = prec.eps_dr           # Initialize the max dr to upper limit
 
-        self.maxvel = float(np.sqrt(np.max(self.v2)))
-        self.minkn = float(np.min(self.kn))
+        self.maxvel = float(np.sqrt(np.max(self.v2_tot)))
         self.mintrelax = float(np.min(self.trelax))
 
         # For diagnostics
@@ -395,8 +547,8 @@ class State:
         rho_c: float, optional
             Max central denisty value to advance until
         """
-        from pygtfcode.evolve.integrator import run_until_stop
-        from pygtfcode.io.write import write_log_entry, write_profile_snapshot, write_time_evolution
+        from pygtf2.evolve.integrator import run_until_stop
+        from pygtf2.io.write import write_log_entry, write_profile_snapshot, write_time_evolution
         from time import time as _now
 
         start = _now()
@@ -412,47 +564,20 @@ class State:
             kwargs['rho_c'] = rho_c
 
         # Write initial state to disk 
-        write_profile_snapshot(self)
-        write_time_evolution(self)
+        # write_profile_snapshot(self)
+        # write_time_evolution(self)
         write_log_entry(self, start_step)
 
         # Integrate forward in time until a halting criterion is met
-        run_until_stop(self, start_step, **kwargs)
+        # run_until_stop(self, start_step, **kwargs)
 
-        # Write final state to disk
-        write_profile_snapshot(self)
-        write_time_evolution(self)
-        write_log_entry(self, start_step)
+        # # Write final state to disk
+        # write_profile_snapshot(self)
+        # write_time_evolution(self)
+        # write_log_entry(self, start_step)
 
         end = _now()
         _print_time(start, end, funcname="run()")
-        
-    def get_phys(self):
-        """
-        Method to print characteristic quantities in physical units
-        """
-        from pygtfcode.profiles.profile_routines import menc
-        char = self.char
-        init = self.config.init
-
-        Mtot = menc(self.config.grid.rmax, self, chatter=False) * char.m_s
-        rvir = 0.169 * (init.Mvir / 1.0e12)**(1/3)
-        rvir *= (const.Delta_vir / 178.0)**(-1.0/3.0)
-        rvir *= (_xH(init.z, const) / (100 * const.xhubble))**(-2/3)
-        rvir /= const.xhubble
-        vvir = np.sqrt(const.gee * init.Mvir / const.xhubble / rvir)
-
-        params_dict = {
-            'log[Mvir/Msun]'            : np.log10(init.Mvir / const.xhubble),
-            'log[Mtot/Msun]'            : np.log10(Mtot),
-            'Vvir [km/s]'               : vvir,
-            'v_0 [km/s]'                : char.v0,
-            'log[rho_s/(Msun/kpc^3)]'   : np.log10(char.rho_s * 1.0e-9),
-            'r_s [kpc]'                 : char.r_s * 1.0e3,
-            't_0 [Gyr]'                 : char.t0 * const.sec_to_Gyr
-        }
-
-        return params_dict
 
     def plot_time_evolution(self, **kwargs):
         """
@@ -476,7 +601,7 @@ class State:
         grid : bool, optional
             If True, shows grid on axis
         """
-        from pygtfcode.plot.time_evolution import plot_time_evolution
+        from pygtf2.plot.time_evolution import plot_time_evolution
 
         plot_time_evolution(self, **kwargs)
 
@@ -498,7 +623,7 @@ class State:
         grid : bool, optional
             If True, shows grid on axes
         """
-        from pygtfcode.plot.snapshot import plot_snapshots
+        from pygtf2.plot.snapshot import plot_snapshots
 
         snapshots = kwargs.pop('snapshots', -1)
         plot_snapshots(self, snapshots=snapshots, **kwargs)
@@ -524,7 +649,7 @@ class State:
         None
             Saves the movie as an MP4 file in the model directory.
         """
-        from pygtfcode.plot.snapshot import make_movie
+        from pygtf2.plot.snapshot import make_movie
 
         make_movie(self, **kwargs)
 

@@ -1,7 +1,7 @@
 import numpy as np
-from pygtfcode.profiles.nfw import menc_nfw, sigr_nfw
-from pygtfcode.profiles.abg import menc_abg, sigr_abg
-from pygtfcode.profiles.truncated_nfw import menc_trunc, sigr_trunc
+from pygtf2.profiles.nfw import menc_nfw, sigr_nfw
+from pygtf2.profiles.abg import menc_abg, sigr_abg
+from pygtf2.profiles.truncated_nfw import menc_trunc, sigr_trunc
 
 def _as_f64(x):
     """
@@ -10,16 +10,18 @@ def _as_f64(x):
     a = np.asarray(x, dtype=np.float64)
     return a if a.ndim else float(a)
 
-def menc(r, state, **kwargs):
+def menc(r, init, prec, **kwargs):
     """
-    Compute enclosed mass at radius r, in units of Mvir.
+    Compute enclosed mass at radius r, in units of ms.
 
     Parameters
     ----------
     r : float or array-like
         Radius in units of scale radius (r / r_s).
-    state : State
-        The simulation state object.
+    prec : PrecisionParams
+        The simulation PrecisionParams object
+    init: InitParams
+        Initial profile parameters object.
 
     Returns
     -------
@@ -27,17 +29,17 @@ def menc(r, state, **kwargs):
         Enclosed mass at r, normalized by Mvir.
     """
     r = _as_f64(r)
-    profile = state.config.init.profile
+    profile = init.profile
     if profile == "nfw":
         return menc_nfw(r)
     elif profile == "truncated_nfw":
-        return menc_trunc(r, state, **kwargs)
+        return menc_trunc(r, prec, **kwargs)
     elif profile == "abg":
-        return menc_abg(r, state.config)
+        return menc_abg(r, init, prec)
     else:
         raise ValueError(f"Unsupported profile type: {profile}")
 
-def sigr(r, state):
+def sigr(r, init, prec, **kwargs):
     """
     Compute radial velocity dispersion squared v^2(r).
 
@@ -45,8 +47,10 @@ def sigr(r, state):
     ----------
     r : float or array-like
         Radius in units of scale radius (r / r_s).
-    state : State
-        The simulation state object.
+    prec : PrecisionParams
+        The simulation PrecisionParams object
+    init: InitParams
+        Initial profile parameters object.
 
     Returns
     -------
@@ -54,50 +58,12 @@ def sigr(r, state):
         Velocity dispersion squared.
     """
     r = _as_f64(r)
-    profile = state.config.init.profile
+    profile = init.profile
     if profile == "nfw":
-        return sigr_nfw(r, state.config)
+        return sigr_nfw(r, prec)
     elif profile == "truncated_nfw":
-        return sigr_trunc(r, state)
+        return sigr_trunc(r, prec, **kwargs)
     elif profile == "abg":
-        return sigr_abg(r, state.config)
+        return sigr_abg(r, init, prec)
     else:
         raise ValueError(f"Unsupported profile type: {profile}")
-
-
-# from pygtfcode.profiles.nfw import fNFW
-# # from pygtfcode.profiles.truncated_nfw import toint4
-# # from pygtfcode.profiles.abg import toint4b
-# from scipy.integrate import quad
-
-# def menc(r, config):
-#     """
-#     Compute the enclosed mass M(r) in units of Mvir.
-
-#     Parameters
-#     ----------
-#     r : float or ndarray
-#         Radius (in units of r_s).
-#     config : Config
-#         Global simulation configuration object.
-
-#     Returns
-#     -------
-#     M_enc : float or ndarray
-#         Enclosed mass M(<r) in units of Mvir.
-#     """
-#     profile = config.init.profile
-
-#     if profile == "nfw":
-#         return fNFW(r)
-
-#     elif profile == "truncated_nfw":
-#         result, _ = quad(lambda x: toint4(x, config), 0.0, r, epsabs=1e-5, epsrel=1e-5)
-#         return result
-
-#     elif profile == "abg":
-#         result, _ = quad(lambda x: toint4b(x, config), 0.0, r, epsabs=1e-5, epsrel=1e-5)
-#         return result
-
-#     else:
-#         raise ValueError(f"Unknown profile type: {profile}")

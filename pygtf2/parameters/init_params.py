@@ -1,38 +1,38 @@
+from typing import Optional
+
 class InitParams:
     """
     Base class for parameters defining the initial density profile.
+    Only shape parameters are included, since mass is set globally in Config and determined per species via SpecParams.frac.
 
     Attributes
     ----------
-    Mvir : float
-        Virial mass in units of Msun/h.
-    cvir : float
+    cvir : float, optional
         Concentration parameter.
-    z : float
+        If set, then r_s is set to None and derived from cvir and mtot upon state initialization.
+    r_s : float, optional
+        Scale radius in kpc.
+        If set, then cvir is set to None and derived from r_s and mtot upon state initialization.
+    z : float, optional
         Redshift (must be non-negative).
+        Default is 0.0
     profile : str or None
         String identifier for the profile type ('nfw', 'truncated_nfw', 'abg').
     """
 
-    def __init__(self, Mvir: float = 3.0e9, cvir: float = 20.0, z: float = 0.0):
-        self._Mvir = None
+    def __init__(self, 
+                 cvir: Optional[float] = 20.0,
+                 r_s: Optional[float] = None, 
+                 z: float = 0.0
+        ):
         self._cvir = None
+        self._r_s = None
         self._z = None
         self.profile = None  # To be set by subclass
 
-        self.Mvir = Mvir
         self.cvir = cvir
+        self.r_s = r_s
         self.z = z
-
-    @property
-    def Mvir(self):
-        return self._Mvir
-
-    @Mvir.setter
-    def Mvir(self, value):
-        if value <= 0:
-            raise ValueError("Mvir must be positive.")
-        self._Mvir = float(value)
 
     @property
     def cvir(self):
@@ -40,9 +40,27 @@ class InitParams:
 
     @cvir.setter
     def cvir(self, value):
-        if value <= 0:
-            raise ValueError("cvir must be positive.")
-        self._cvir = float(value)
+        if value is not None:
+            if value <= 0:
+                raise ValueError("cvir must be positive.")
+            self._r_s = None
+            self._cvir = float(value)
+        else:
+            self._cvir = None
+
+    @property
+    def r_s(self):
+        return self._r_s
+
+    @r_s.setter
+    def r_s(self, value):
+        if value is not None:
+            if value <= 0:
+                raise ValueError("r_s must be positive.")
+            self._cvir = None
+            self._r_s = float(value)
+        else:
+            self._r_s = None
 
     @property
     def z(self):
@@ -55,7 +73,7 @@ class InitParams:
         self._z = float(value)
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(Mvir={self.Mvir}, cvir={self.cvir}, z={self.z})"
+        return f"{self.__class__.__name__}(cvir={self.cvir}, r_s={self.r_s}, z={self.z})"
 
 
 class NFWParams(InitParams):
@@ -108,7 +126,7 @@ class TruncatedNFWParams(InitParams):
         self._deltaP = float(value)
 
     def __repr__(self):
-        return (f"TruncatedNFWParams(Mvir={self.Mvir}, cvir={self.cvir}, z={self.z}, "
+        return (f"TruncatedNFWParams(cvir={self.cvir}, r_s={self.r_s}, z={self.z}, "
                 f"Zt={self.Zt}, deltaP={self.deltaP})")
 
 
@@ -159,7 +177,7 @@ class ABGParams(InitParams):
         self._gamma = float(value)
 
     def __repr__(self):
-        return (f"ABGParams(Mvir={self.Mvir}, cvir={self.cvir}, z={self.z}, "
+        return (f"ABGParams(cvir={self.cvir}, r_s={self.r_s}, z={self.z}, "
                 f"alpha={self.alpha}, beta={self.beta}, gamma={self.gamma})")
 
 

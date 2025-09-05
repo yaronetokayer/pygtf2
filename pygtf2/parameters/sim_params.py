@@ -4,51 +4,41 @@ class SimParams:
 
     Attributes
     ----------
-    sigma_m : float
-        Self-interaction cross-section in cm^2/g. Must be positive.
     t_halt : float
         Simulation halt time. Must be positive.
     rho_c_halt : float
         Central density at which to halt the simulation. Must be positive.
-    a : float
-        Model parameter 'a'. Must be positive.
+    lnL_param : float
+        Coulomb logarithm calibration parameter. Must be positive.
+    alpha : float
+        Parameter alpha from Zhong & Shapiro (2025; arXiv:2505.18251)
     b : float
-        Model parameter 'b'. Must be positive.
-    c : float
-        Model parameter 'c'. Must be positive.
+        Parameter b from Zhong & Shapiro (2025; arXiv:2505.18251)
+    beta : float
+        Parameter beta from Zhong & Shapiro (2025; arXiv:2505.18251)
     """
     def __init__(
             self, 
-            sigma_m : float = 10.0,
             t_halt : float = 1e3,
             rho_c_halt : float = 1500,
-            a : float = 2.256758,
-            b: float = 1.38,
-            c: float = 0.75
+            lnL_param : float = 0.11,
+            alpha : float = 1.217,
+            beta : float = 1.0,
+            b : float = 0.45
     ):
-        self._sigma_m = None
         self._t_halt = None
         self.rho_c_halt = rho_c_halt
-        self._a = None
+        self._lnL_param = None
+        self._alpha = None
+        self._beta = None
         self._b = None
-        self._c = None
 
-        self.sigma_m = sigma_m
         self.t_halt = t_halt
         self.rho_c_halt = rho_c_halt
-        self.a = a
+        self.lnL_param = lnL_param
+        self.alpha = alpha
+        self.beta = beta
         self.b = b
-        self.c = c
-
-    @property
-    def sigma_m(self):
-        return self._sigma_m
-
-    @sigma_m.setter
-    def sigma_m(self, value):
-        if value <= 0:
-            raise ValueError("sigma_m must be positive")
-        self._sigma_m = float(value)
 
     @property
     def t_halt(self):
@@ -71,14 +61,34 @@ class SimParams:
         self._rho_c_halt = float(value)
 
     @property
-    def a(self):
-        return self._a
+    def lnL_param(self):
+        return self._lnL_param
 
-    @a.setter
-    def a(self, value):
+    @lnL_param.setter
+    def lnL_param(self, value):
         if value <= 0:
-            raise ValueError("a must be positive")
-        self._a = float(value)
+            raise ValueError("lnL_param must be positive")
+        self._lnL_param = float(value)
+
+    @property
+    def alpha(self):
+        return self._alpha
+
+    @alpha.setter
+    def alpha(self, value):
+        if value <= 0:
+            raise ValueError("alpha must be positive")
+        self._alpha = float(value)
+
+    @property
+    def beta(self):
+        return self._beta
+
+    @beta.setter
+    def beta(self, value):
+        if value <= 0:
+            raise ValueError("beta must be positive")
+        self._beta = float(value)
 
     @property
     def b(self):
@@ -89,16 +99,6 @@ class SimParams:
         if value <= 0:
             raise ValueError("b must be positive")
         self._b = float(value)
-
-    @property
-    def c(self):
-        return self._c
-
-    @c.setter
-    def c(self, value):
-        if value <= 0:
-            raise ValueError("c must be positive")
-        self._c = float(value)
 
     def __repr__(self):
         attrs = [

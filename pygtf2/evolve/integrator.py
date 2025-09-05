@@ -4,7 +4,7 @@ def run_until_stop(state, start_step, **kwargs):
     """
     Repeatedly step forward until t >= t_halt or halting criterion met.
     """
-    from pygtfcode.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
+    from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 
     # User halting criteria
     steps = kwargs.get('steps', None)
@@ -122,8 +122,8 @@ def integrate_time_step(state, dt_prop, step_count):
     step_count : int
         Step count
     """
-    from pygtfcode.evolve.transport import compute_luminosities, conduct_heat
-    from pygtfcode.evolve.hydrostatic import revirialize, compute_mass
+    from pygtf2.evolve.transport import compute_luminosities, conduct_heat
+    from pygtf2.evolve.hydrostatic import revirialize, compute_mass
 
     # Store state attributes for fast access in loop and to pass into njit functions
     prec = state.config.prec
@@ -155,7 +155,8 @@ def integrate_time_step(state, dt_prop, step_count):
     # Compute total enclosed mass including baryons, perturbers, etc.
     # May need to move into loop depending on how m is updated
     # Current version just returns m as is
-    m_tot = compute_mass(m)
+    # m_tot = compute_mass(m)
+    m_tot = state.m_tot
 
     while not converged:
         ### Step 1: Energy transport ###

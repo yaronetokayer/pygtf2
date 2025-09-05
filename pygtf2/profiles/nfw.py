@@ -27,7 +27,7 @@ def _nfw_velocity_integrand(x):
 def menc_nfw(r):
     return fNFW(r)
 
-def sigr_nfw(r, config):
+def sigr_nfw(r, prec):
     """
     Velocity dispersion squared at radius r (in units of v0^2).
 
@@ -35,14 +35,16 @@ def sigr_nfw(r, config):
     ----------
     r : float or ndarray
         Radius in units of r_s.
+    prec : PrecisionParams
+        The simulation PrecisionParams object
 
     Returns
     -------
     v2 : float or ndarray
         Velocity dispersion squared.
     """
-    epsabs = float(config.prec.epsabs)
-    epsrel = float(config.prec.epsrel)
+    epsabs = float(prec.epsabs)
+    epsrel = float(prec.epsrel)
 
     r = np.asarray(r, dtype=np.float64)
     out = np.empty(r.shape, dtype=np.float64)
