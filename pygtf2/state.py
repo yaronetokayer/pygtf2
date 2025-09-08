@@ -518,7 +518,7 @@ class State:
         self.du_max = prec.eps_du           # Initialize the max du to upper limit
         self.dr_max = prec.eps_dr           # Initialize the max dr to upper limit
 
-        self.maxvel = float(np.sqrt(np.max(self.v2_tot)))
+        self.maxvel = float(np.sqrt(np.max(self.v2)))
         self.mintrelax = float(np.min(self.trelax))
 
         # For diagnostics
@@ -564,7 +564,7 @@ class State:
             kwargs['rho_c'] = rho_c
 
         # Write initial state to disk 
-        # write_profile_snapshot(self)
+        write_profile_snapshot(self)
         # write_time_evolution(self)
         write_log_entry(self, start_step)
 
@@ -572,9 +572,9 @@ class State:
         # run_until_stop(self, start_step, **kwargs)
 
         # # Write final state to disk
-        # write_profile_snapshot(self)
+        write_profile_snapshot(self)
         # write_time_evolution(self)
-        # write_log_entry(self, start_step)
+        write_log_entry(self, start_step)
 
         end = _now()
         _print_time(start, end, funcname="run()")

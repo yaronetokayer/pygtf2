@@ -71,8 +71,8 @@ def _realign_one_species(r_src_edges, rho_src, v2_src, r_hat_edges,
     # recompute enclosed mass on the new edges
     m_hat_out[0] = 0.0
     for i in range(N):
-        dV = r_hat_edges[i+1]**3 - r_hat_edges[i]**3
-        m_hat_out[i+1] = m_hat_out[i] + (dV * rho_hat_out[i]) / 3.0
+        dr3 = r_hat_edges[i+1]**3 - r_hat_edges[i]**3
+        m_hat_out[i+1] = m_hat_out[i] + (dr3 * rho_hat_out[i]) / 3.0
 
 @njit(types.Tuple((float64[:,:], float64[:,:], float64[:,:], float64[:,:], float64[:,:], float64[:]))
       (float64[:,:], float64[:,:], float64[:,:]), cache=True, fastmath=True)
