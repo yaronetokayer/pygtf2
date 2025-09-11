@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import subprocess
 from tqdm import tqdm
 import shutil
-from pygtfcode.io.read import extract_snapshot_data, extract_snapshot_indices
+from pygtf2.io.read import extract_snapshot_data, extract_snapshot_indices
 
 def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=False):
     """
@@ -15,7 +15,7 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
     ax : Axis
         Axis object on which to plot
     profile : str
-        Profile to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax', 'kn'
+        Profile to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax'
     data_list : dict
         Dictionary returned by extract_snapshot_data()
     legend : bool, optional
@@ -36,44 +36,80 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
     else:
         cmap = plt.get_cmap('tab20')
 
-    ylim_lower = None
-    for ind, data in enumerate(data_list):
-        xkey = 'log_r' if profile == 'm' else 'log_rmid'
+    # Pick linestyles for species; stable mapping by species name
+    species_names = sorted(data_list[0]['species'].keys()) if data_list and 'species' in data_list[0] else []
+    base_styles = ['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))]
+    style_map = {name: base_styles[i % len(base_styles)] for i, name in enumerate(species_names)}
+
+    # Which x to use
+    xkey = 'log_r' if profile == 'm' else 'log_rmid'
+
+    # Prepare global axis limits (log scale → ignore nonpositive)
+    posmin = np.inf
+    posmax = 0.0
+    xmin = np.inf
+    xmax = -np.inf
+
+    # Pass 1: compute limits across all plotted series
+    for data in data_list:
         x = data[xkey]
-        y = data[profile]
-        if ind == 0:
-            ylim_lower = np.min(y[y > 0]) * 0.5
-            xlim_lower = 10**np.min(x) * 0.8
-            ylim_upper = np.max(y) * 10
-            xlim_upper = 10**np.max(x) * 1.2
-        else:
-            ylim_lower = np.min([ylim_lower, np.min(y[y > 0]) * 0.5])
-            xlim_lower = np.min([xlim_lower, 10**np.min(x) * 0.8])
-            ylim_upper = np.max([ylim_upper, np.max(y) * 10])
-            xlim_upper = np.max([xlim_upper, 10**np.max(x) * 1.2])
+        if profile in {'rho', 'm', 'v2', 'p'}:
+            y_tot = data[profile + '_tot'] if profile != 'm' else data['m_tot']
+            y_all = [y_tot]
+        else:  # 'trelax' has no total
+            y_all = []
 
-        ax.plot(10**x, y, lw=2, color=cmap(ind % 10), label=f"t={data['time']:.2e}")
+        for sp in species_names:
+            y_sp = data['species'][sp][profile]
+            y_all.append(y_sp)
 
-        if profile == 'kn' and ind == 0:
-            ax.axhline(1.0, color='black', ls=':')
-            ax.text(0.95, 1.1, 'LMFP', ha='right', va='bottom', fontsize=12, transform=ax.get_yaxis_transform())
-            ax.text(0.95, 0.9, 'SMFP', ha='right', va='top', fontsize=12, transform=ax.get_yaxis_transform())
+        # update limits
+        # x (edges for m, mid otherwise)
+        xmin = min(xmin, 10.0**np.min(x))
+        xmax = max(xmax, 10.0**np.max(x))
+        # y (only positive for log)
+        for y in y_all:
+            y_pos = y[y > 0]
+            if y_pos.size:
+                posmin = min(posmin, np.min(y_pos))
+                posmax = max(posmax, np.max(y_pos))
 
-        if ind == len(data_list) - 1:
-            if profile == 'kn':
-                ylim_lower = np.min([ylim_lower, 0.1])
-            ax.set_xlim([xlim_lower, xlim_upper])
-            ax.set_ylim([ylim_lower, ylim_upper])
+    # Safeguard limits
+    if not np.isfinite(posmin) or posmin <= 0:
+        posmin = 1e-99
+    if posmax <= 0:
+        posmax = 1.0
+
+    # Pass 2: plot
+    for ind, data in enumerate(data_list):
+        color = cmap(ind % 10)
+        x = data[xkey]
+        X = 10.0**x
+        time_lbl = f"t={data['time']:.2e}"
+
+        # totals (solid), if applicable
+        if profile in {'rho', 'm', 'v2', 'p'}:
+            y_tot = data[profile + '_tot'] if profile != 'm' else data['m_tot']
+            ax.plot(X, y_tot, lw=2.2, color=color, ls='solid', label=time_lbl)
+        # species (own linestyle), no extra legend spam
+        for ind, sp in enumerate(species_names):
+            label = '_nolegend_'
+            if profile == 'trelax' and ind == 1:
+                label = time_lbl
+            y_sp = data['species'][sp][profile]
+            ax.plot(X, y_sp, lw=1.8, color=color, ls=style_map[sp], label=label)
 
     ax.set_xscale('log')
     ax.set_yscale('log')
+    ax.set_xlim([xmin * 0.8, xmax * 1.2])
+    ax.set_ylim([posmin * 0.5, posmax * 10.0])
     ax.set_xlabel(r'Radius [$r_\mathrm{s,0}$]', fontsize=14)
     ax.set_ylabel(profile, fontsize=14)
     ax.tick_params(axis='both', labelsize=12)
     if legend:
         ax.legend()
     if grid:
-        ax.grid(True, which="both", ls="--")
+        ax.grid(True, which="both", ls="--", alpha=0.4)
 
 def plot_snapshots(model, snapshots=[0], profiles='rho', base_dir=None, filepath=None, show=False, grid=False, for_movie=False):
     """
@@ -86,7 +122,7 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', base_dir=None, filepath
     snapshots : int or list of int
         Snapshot indices to plot
     profiles : str or list of str, optional
-        Profiles to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax', 'kn'
+        Profiles to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax'
     base_dir : str, optional
         Required if any model is passed as an integer.  The directory in which all ModelXXX subdirectories reside.
     filepath : str, optional
@@ -122,18 +158,19 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', base_dir=None, filepath
             snapshot_indices_data = extract_snapshot_indices(os.path.dirname(_resolve_dir(model, 0)))
             snapshots[ind] = snapshot_indices_data['snapshot_index'][-1]
 
-    n = 1 if type(profiles) != list else len(profiles) # number of panels
+    profiles_list = profiles if isinstance(profiles, list) else [profiles]
+    n = len(profiles_list) # Number of panels
 
     data_list = [extract_snapshot_data(_resolve_dir(model,ind)) for ind in snapshots]
 
     fig, axs = plt.subplots(1, n, figsize=(6*n, 5))
 
     if n == 1:
-        plot_profile(axs, profiles, data_list, legend=True, grid=grid, for_movie=for_movie)
+        plot_profile(axs, profiles_list[0], data_list, legend=True, grid=grid, for_movie=for_movie)
     else:
         for ind, ax in enumerate(axs):
             legend = False if ind < len(axs) - 1 else True
-            plot_profile(ax, profiles[ind], data_list, legend=legend, grid=grid, for_movie=for_movie)
+            plot_profile(ax, profiles_list[ind], data_list, legend=legend, grid=grid, for_movie=for_movie)
 
     if filepath:
         fig.savefig(filepath, dpi=300, bbox_inches='tight')

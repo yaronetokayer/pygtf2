@@ -1,5 +1,4 @@
 import numpy as np
-from pygtf2.parameters.constants import Constants as const
 import os
 
 def make_dir(state):
@@ -239,52 +238,83 @@ def append_snapshot_conversion(state):
 
 def write_time_evolution(state):
     """
-    Append time evolution data to time_evolution.dat
+    Append time evolution data to time_evolution.txt
+
+    Columns:
+      step, time, rho_c_tot, v_max, mintrel,
+      [for each species in state.labels in order:]
+        rho_c[<label>], r1pct[<label>], r5pct[<label>], r10pct[<label>],
+        r20pct[<label>], r50pct[<label>], r90pct[<label>]
 
     Arguments
     ---------
     state : State
         The current simulation state.
     """
-    filepath = os.path.join(state.config.io.base_dir, state.config.io.model_dir, f"time_evolution.txt")
+    io = state.config.io
+    filepath = os.path.join(io.base_dir, io.model_dir, f"time_evolution.txt")
     step = state.step_count
 
-    header = (
-        f"{'step':>10}  "
-        f"{'time':>12}  "
-        f"{'t_Gyr':>12}  "
-        f"{'rho_c':>12}  "
-        f"{'rhoc_Msunpc3':>12}  "
-        f"{'v_max':>12}  "
-        f"{'v_max_kms':>12}  "
-        f"{'Kn_min':>12}  "
-        f"{'mintrel':>12}  "
-        f"{'mintrel_Gyr':>12}\n"
-    )
+    labels = list(state.labels)
+    s = len(labels)
 
-    char = state.char
-    t = state.t
-    t_conv = char.t0 * const.sec_to_Gyr
-    rho_c = state.rho[0]
-    maxvel = state.maxvel
-    mintrelax = state.mintrelax
+    # Build header
+    header = [
+        f"{'step':>10}",
+        f"{'time':>13}",
+        f"{'rho_c_tot':>13}",
+        f"{'v_max':>13}",
+        f"{'mintrel':>13}",
+    ]
 
-    new_line = ( 
-        f"{step:10d}  "
-        f"{t:12.6e}  "
-        f"{t * t_conv:12.6e}  "
-        f"{rho_c:12.6e}  "
-        f"{rho_c * char.rho_s *  1.0E-18:12.6e}  "
-        f"{maxvel:12.6e}  "
-        f"{maxvel * char.v0:12.6e}  "
-        f"{state.minkn:12.6e}  "
-        f"{mintrelax:12.6e}  "
-        f"{mintrelax * t_conv:12.6e}\n" 
-        )
+    # Add per species
+    for name in labels:
+        header.extend([
+            f"{f'rho_c[{name}]':>13}",
+            f"{f'r01[{name}]':>13}",
+            f"{f'r05[{name}]':>13}",
+            f"{f'r10[{name}]':>13}",
+            f"{f'r20[{name}]':>13}",
+            f"{f'r50[{name}]':>13}",
+            f"{f'r90[{name}]':>13}",
+        ])
+    header = "  ".join(header) + "\n"
+
+    # Build data row
+    row = [ 
+        f"{step:10d}",
+        f"{state.t: 13.6e}",
+        f"{state.rho_tot[0]: 13.6e}",
+        f"{state.maxvel: 13.6e}",
+        f"{state.mintrelax: 13.6e}",
+    ]
+
+    # Add per species
+    percents = np.array([0.01, 0.05, 0.10, 0.20, 0.50, 0.90], dtype=np.float64) # Enclosed mass pcts
+    rho = state.rho
+    r = state.r
+    m = state.m
+    for k, name in enumerate(labels):
+        rho_c_k = float(rho[k, 0])
+
+        # Expecting: array([r_1%, r_5%, r_10%, r_20%, r_50%, r_90%]) in code units
+        radii = np.asarray(mass_fraction_radii(r[k], m[k], percents), dtype=np.float64)
+
+        row.extend([
+            f"{rho_c_k: 13.6e}",
+            f"{radii[0]: 13.6e}",
+            f"{radii[1]: 13.6e}",
+            f"{radii[2]: 13.6e}",
+            f"{radii[3]: 13.6e}",
+            f"{radii[4]: 13.6e}",
+            f"{radii[5]: 13.6e}",
+        ])
+
+    new_line = "  ".join(row) + "\n"
     
     _update_file(filepath, header, new_line, step)
 
-    if state.config.io.chatter:
+    if io.chatter:
         if step == 0:
             print("Time evolution file initialized.")
 
@@ -324,3 +354,24 @@ def _update_file(filepath, header, new_line, index):
 
     with open(filepath, "w") as f:
         f.writelines(lines)
+
+def mass_fraction_radii(r_edges, m_edges, fracs):
+    # m_edges should be enclosed mass at edges, with m_edges[-1] = species total
+    m_tot = m_edges[-1]
+    if m_tot <= 0:
+        return np.full(fracs.size, np.nan)
+    target = fracs * m_tot
+    out = np.empty(fracs.size)
+    # linear-in-radius search & interpolation on edges
+    j = 0
+    for i, mt in enumerate(target):
+        while j+1 < m_edges.size and m_edges[j+1] < mt:
+            j += 1
+        if j+1 == m_edges.size:
+            out[i] = r_edges[-1]
+        else:
+            m0, m1 = m_edges[j], m_edges[j+1]
+            r0, r1 = r_edges[j], r_edges[j+1]
+            t = 0.0 if m1 == m0 else (mt - m0) / (m1 - m0)
+            out[i] = r0 + t * (r1 - r0)
+    return out

@@ -1,6 +1,7 @@
 import os
 import matplotlib.pyplot as plt
-from pygtfcode.io.read import extract_time_evolution_data
+from itertools import cycle
+from pygtf2.io.read import extract_time_evolution_data
 
 def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepath=None, base_dir=None, show=False, grid=False):
     """
@@ -8,12 +9,11 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
 
     Arguments
     ---------
-    models : State object, Config object, or model_no (or list of the above)
-        Each model can be a State, Config, or integer model number.
-    quantity : str, optional
-        Key from the time_evolution.txt file to plot on the y-axis.
-        Default is 'rho_c'.
-        Options are 't_phys', 'rho_c', 'rho_c_phys', 'v_max', 'v_max_phys', 'kn_min', 'mintrel', 'mintrel_phys'
+    models : State | Config | int | list
+        State or Config objects, or integer model numbers.
+        If quantity is 'r_enc', only one model can be passed.
+    quantity : {'rho_c','v_max','mintrel', 'r_enc'}, optional
+        What to plot on y-axis. If 'rho_c', also plots per-species curves.  Default is rho_c
     ylabel : str, optional
         Custom y-axis label. Defaults to quantity.
     logy : bool, optional
@@ -27,7 +27,7 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
     grid : bool, optional
         If True, shows grid on axis
     """
-    if type(models) != list:
+    if not isinstance(models, list):
         models = [models]
 
     def _resolve_path(model):
@@ -37,7 +37,7 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
             return os.path.join(model.io.base_dir, model.io.model_dir, f"time_evolution.txt")
         elif isinstance(model, int): # Passed model number
             if base_dir is None:
-                raise ValueError("'base_dir' (base directory) must be specified if using model numbers.")
+                raise ValueError("'base_dir' must be specified when passing model numbers.")
             model_dir = f"Model{model:03d}"
             return os.path.join(base_dir, model_dir, "time_evolution.txt")
         else:
@@ -45,21 +45,76 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
 
     data_list = [extract_time_evolution_data(_resolve_path(m)) for m in models]
 
+    if quantity not in {'rho_c', 'v_max', 'mintrel', 'r_enc'}:
+        raise ValueError("quantity must be one of {'rho_c','v_max','mintrel'}")
+    
+    # Special handling for r_enc: require exactly one model
+    if quantity == 'r_enc' and len(models) != 1:
+        raise ValueError("quantity='r_enc' expects exactly one model.")
+
     fig, ax = plt.subplots(figsize=(7, 5))
     cmap = plt.get_cmap('tab10')
 
-    for i, data in enumerate(data_list):
-        label = f"{data['model_id']:03d}"
-        ax.plot(data['t'], data[quantity], lw=2, ls='solid', color=cmap(i % 10), label=label)
+    if quantity in {'rho_c', 'v_max', 'mintrel'}:
+        for i, data in enumerate(data_list):
+            color = cmap(i % 10)
+            model_label = f"{data.get('model_id', i):03d}"
+            t = data['time']
 
+            if quantity == 'rho_c':
+                # total
+                ax.plot(t, data['rho_c_tot'], lw=2, color=color, ls='solid', label=f"{model_label} total")
+
+                # per-species (unique linestyle per species for this model)
+                # reset style cycle for each model so species styles are consistent per-model
+                styles = cycle(['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))])
+                # iterate species in sorted name order for stable legends
+                for sp_name in sorted(data['species'].keys()):
+                    rho_c_k = data['species'][sp_name]['rho_c']
+                    ax.plot(t, rho_c_k, lw=2, color=color, ls=next(styles), label=f"{model_label} {sp_name}")
+
+            else:
+                ax.plot(t, data[quantity], lw=2, ls='solid', color=color, label=model_label)
+
+        ax.set_ylabel(ylabel if ylabel else quantity, fontsize=16)
+
+    elif quantity == 'r_enc':
+        data = data_list[0]
+        t = data['time']
+
+        color = cmap(0)
+
+        # consistent linestyle per species
+        # (map by species name so the same species always looks the same)
+        base_styles = ['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))]
+        species_names = sorted(data['species'].keys())
+        style_map = {name: base_styles[i % len(base_styles)] for i, name in enumerate(species_names)}
+
+        keys = ['r01', 'r05', 'r10', 'r20', 'r50', 'r90']
+
+        # build legend entries once per species
+        for sp_name in species_names:
+            sp = data['species'][sp_name]
+
+            # plot all percentiles with the same linestyle & color
+            ls = style_map[sp_name]
+            for k in keys:
+                y = sp[k]
+                ax.plot(t, y, lw=1.8, color=color, ls=ls)
+
+            # add one invisible handle with desired linestyle for legend
+            ax.plot([], [], lw=2.2, color=color, ls=ls, label=sp_name)
+
+        ax.set_ylabel(ylabel if ylabel else r"$r_\mathrm{enc}$", fontsize=14)
+
+    # Cosmetics
     ax.set_xlabel(r'Time [$t_\mathrm{char}$]', fontsize=16)
-    ax.set_ylabel(ylabel if ylabel else quantity, fontsize=16)
     if logy:
         ax.set_yscale('log')
     ax.tick_params(axis='both', labelsize=12)
-    ax.legend(fontsize=12)
     if grid:
         ax.grid(True, which="both", ls="--")
+    ax.legend(fontsize=10, frameon=False, ncol=1)
 
     if filepath:
         fig.savefig(filepath, bbox_inches='tight', dpi=300)

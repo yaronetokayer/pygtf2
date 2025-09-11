@@ -1,71 +1,66 @@
 import numpy as np
-from numba import njit, float64, boolean, types
+from numba import njit, float64, types
 
-@njit(float64[:](float64, float64, float64, float64,
-                 float64[:], float64[:], float64[:], boolean),
-      cache=True, fastmath=True)
-def compute_luminosities(a, b, c, sigma_m, r, v2, p, cored) -> np.ndarray:
+@njit(
+    float64[:, :](float64, float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:,:]),
+    cache=True, fastmath=True
+)
+def compute_luminosities(c2, r, u, rho, mrat, lnL) -> np.ndarray:
     """ 
     Compute luminosity of each shell interface based on temperature gradient and conductivity.
-    e.g, Eq. (2) in Nishikawa et al. 2020.
+    e.g, Eq. (43) in Zhong and Shapiro (2025).
 
     Arguments
     ----------
-    a : float
-        Constant 'a' in the conductivity formula.
-    b : float
-        Constant 'b' in the conductivity formula.
-    c : float
-        Constant 'c' in the conductivity formula.
-    sigma_m : float
-        Interaction cross section in dimensionless units.
+    c2 : float
+        Constant 'c2' in the luminosity formula.
     r : ndarray
-        Radial grid points, including cell edges (length = ngrid + 1).
-    v2 : ndarray
-        Velocity dispersion squared for each cell (length = ngrid).
-    p : ndarray
-        Pressure for each cell (length = ngrid).
-    cored : bool
-        Whether the system has a central core (i.e., ABG with gamma < 1.0).
+        Radial grid points, including cell edges.
+    u : ndarray
+        Specific internal energy for each cell.
+    rho : ndarray
+        Density for each cell.
+    mrat : ndarray
+        Mass ratio of species (length = s)
+    lnL : ndarray
+        lnL array.
 
     Returns
     -------
-    lum : ndarray
+    L: ndarray
         Luminosities at each shell boundary (same length as r).
     """
-    lum = np.empty(r.shape, dtype=np.float64)
+    s, Np1 = r.shape
+    L = np.zeros((s, Np1), np.float64) # Initialization takes care of boundary conditions
 
-    # Compute temperature gradient and midpoints using cell-centered values
-    dTdr = ( v2[1:] - v2[:-1] ) / ( r[2:] - r[:-2] )
-    vmed = np.sqrt( 0.5 * ( v2[1:] + v2[:-1] ) )
-    pmed = 0.5 * ( p[1:] + p[:-1] )
+    for n in range(s):
+        # Closure relations
+        u_n     = u[n]                 # (N,)
+        rho_n   = rho[n]                # (N,)
 
-    # One sided difference for cored profiles (i.e., ABG with gamma < 1)
-    if cored:
-        dTdr[0] = (v2[1] - v2[0]) / (r[2] - r[1])
-        vmed[0] = np.sqrt(v2[0])
-        pmed[0] = p[0]
+        # Centered interface values
+        rhom = 0.5 * (rho_n[1:] + rho_n[:-1]) # (N-1,)
+        umed = 0.5 * (u_n[1:]   + u_n[:-1])   # (N-1,)
+        dTdr = 2.0 * (u_n[1:] - u_n[:-1]) / (r[n, 2:] - r[n, :-2])
 
-    fac1 = -3.0 * vmed * r[1:-1]**2
-    fac2 = (a / b) * sigma_m**2 + ( (1.0 / c) / pmed )
+        fac = (r[n, 1:-1]**2) * (rhom / np.sqrt(umed))
+        pref = (-c2) * (mrat[n] * lnL[n,n])
 
-    lum[1:-1] = (fac1 / fac2) * dTdr
+        L[n, 1:-1] = pref * fac * dTdr
 
-    # Boundary conditions
-    lum[0] = 0.0
-    lum[-1] = 0.0
+    return L
 
-    return lum
-
-@njit(types.Tuple((float64[:], float64, float64))(
-    float64[:], float64[:], float64[:], float64[:], float64, float64
+@njit(types.Tuple((float64[:,:], float64, float64))(
+    float64[:,:], float64[:,:], float64[:,:], float64[:,:], float64[:,:], float64[:], float64, float64, float64
     ), cache=True, fastmath=True)
-def conduct_heat(m, u, rho, lum, dt_prop, eps_du) -> tuple[np.ndarray, float, float]:
+def conduct_heat(m, u, rho, lum, lnL, mrat, dt_prop, eps_du, c1) -> tuple[np.ndarray, float, float]:
     """
     Conduct heat and adjust internal energies accordingly.
     Ignores PdV work and assumes fixed density.
     Updates internal energy and recomputes pressure.
     Updates dt_prop if necessary based on max relative change in u.
+
+     See Eq. (42) in Zhong and Shapiro (2025).
 
     Arguments
     ---------
@@ -76,11 +71,17 @@ def conduct_heat(m, u, rho, lum, dt_prop, eps_du) -> tuple[np.ndarray, float, fl
     rho : np.ndarray
         Density array
     lum : np.ndarray
-        Array of luminosities from compute_luminosities (length = len(state.r))
+        Array of luminosities from compute_luminosities
+    lnL : ndarray
+        lnL array
+    mrat : ndarray
+        Mass ratio of species (length = s)
     dt_prop : float
         Current timestep duration
     eps_du : float
         Maximum allowed relative change in u for convergence
+    c1 : float
+        Constant 'c1' in the luminosity formula
 
     Returns
     -------
@@ -92,13 +93,56 @@ def conduct_heat(m, u, rho, lum, dt_prop, eps_du) -> tuple[np.ndarray, float, fl
         Modified timestep.
     """
 
-    dudt = -( lum[1:] - lum[:-1] ) / ( m[1:] - m[:-1] )
-    du = dudt * dt_prop
+    s, Np1 = m.shape
+    N = Np1 - 1
 
+    # Outputs
+    u_new = np.empty_like(u)
+    p_new = np.empty_like(u)  # same (s, N) shape
+    du    = np.empty_like(u)
+
+    # ---------- flux-divergence term (per species, per cell) ----------
+    # dudt_cond[n, i] = - (L[n, i+1] - L[n, i]) / (M[n, i+1] - M[n, i])
+    dudt_cond = np.empty_like(u)
+    for n in range(s):
+        for i in range(N):
+            denom = m[n, i+1] - m[n, i]
+            dudt_cond[n, i] = - (lum[n, i+1] - lum[n, i]) / denom
+
+    # ---------- binary heat-exchange source (sum over j != n) ----------
+    # dudt_hex[n, i] = c1 * sum_{j != n} lnL[n, j] * rho[j, i] *
+    #                  (mrat[j]*u[j, i] - mrat[n]*u[n, i]) / (u[j, i] + u[n, i])^(3/2)
+    dudt_hex = np.zeros_like(u)
+    for n in range(s):
+        for j in range(s):
+            if j == n:
+                continue
+            lnL_nj = lnL[n, j]
+            mrj    = mrat[j]
+            mrn    = mrat[n]
+            for i in range(N):
+                uj = u[j, i]
+                un = u[n, i]
+                denom = (uj + un)**1.5
+                term = lnL_nj * rho[j, i] * (mrj * uj - mrn * un) / denom
+                dudt_hex[n, i] += term
+    dudt_hex *= c1
+
+    # ---------- combine, adapt dt if needed ----------
+    dudt = dudt_cond + dudt_hex
+    du[:, :] = dudt * dt_prop
+
+    # max relative change across all species/cells
     tiny = np.finfo(np.float64).tiny
-    abs_u = np.abs(u)
-    abs_u[abs_u < tiny] = tiny
-    dumax = np.max(np.abs(du) / abs_u)
+    dumax = 0.0
+    for n in range(s):
+        for i in range(N):
+            abs_u = un = u[n, i]
+            if abs_u < tiny:
+                abs_u = tiny
+            rat = abs(du[n, i]) / abs_u
+            if rat > dumax:
+                dumax = rat
 
     if dumax > eps_du:
         scale = 0.95 * (eps_du / dumax)
@@ -108,7 +152,10 @@ def conduct_heat(m, u, rho, lum, dt_prop, eps_du) -> tuple[np.ndarray, float, fl
     else:
         dt_eff = dt_prop
 
-    u_new = u + du
-    p_new = ( 2.0 / 3.0 ) * rho * u_new
+    # ---------- update u and p ----------
+    for n in range(s):
+        for i in range(N):
+            u_new[n, i] = u[n, i] + du[n, i]
+            p_new[n, i] = (2.0 / 3.0) * rho[n, i] * u_new[n, i]
 
     return p_new, float(dumax), float(dt_eff)

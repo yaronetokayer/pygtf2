@@ -18,8 +18,8 @@ def run_until_stop(state, start_step, **kwargs):
     sim = state.config.sim
     chatter = bool(io.chatter)
     t_halt = float(sim.t_halt)
-    rho0_last_prof = float(state.rho[0])
-    rho0_last_tevol = float(state.rho[0])
+    rho0_last_prof = float(state.rho_tot[0])
+    rho0_last_tevol = float(state.rho_tot[0])
     rho_c_halt = float(sim.rho_c_halt)
     drho_prof = float(io.drho_prof)
     drho_tevol = float(io.drho_tevol)
@@ -37,11 +37,11 @@ def run_until_stop(state, start_step, **kwargs):
         # Integrate time step
         integrate_time_step(state, dt_prop, step_count)
 
-        rho0 = state.rho[0]
+        rho0 = state.rho_tot[0]
 
         # Check halting criteria
         if rho0 > rho_c_halt:
-            if state.t > 50:
+            if step_count > 5e5:
                 if chatter:
                     print("Simulation halted: central density exceeds halting value")
                 break
@@ -124,25 +124,23 @@ def integrate_time_step(state, dt_prop, step_count):
     """
     from pygtf2.evolve.transport import compute_luminosities, conduct_heat
     from pygtf2.evolve.hydrostatic import revirialize, compute_mass
+    from pygtf2.evolve.realign import realign
 
     # Store state attributes for fast access in loop and to pass into njit functions
     prec = state.config.prec
-    sim  = state.config.sim
-    init = state.config.init
+    char  = state.char
 
-    a = float(sim.a); b = float(sim.b); c = float(sim.c)
-    sigma_m = float(state.char.sigma_m_char)
-    cored = (init.profile == 'abg') and (float(init.gamma) < 1.0)
+    c1 = float(char.c1); c2 = float(char.c2)
+    mrat = state.mrat
+    lnL = char.lnL
 
     r_orig  = np.asarray(state.r,   dtype=np.float64)
     m       = np.asarray(state.m,   dtype=np.float64)
-    v2_orig = np.asarray(state.v2,  dtype=np.float64)
-    p_orig  = np.asarray(state.p,   dtype=np.float64)
     u_orig  = np.asarray(state.u,   dtype=np.float64)
     rho_orig= np.asarray(state.rho, dtype=np.float64)
 
     # Compute current luminosity array
-    lum = compute_luminosities(a, b, c, sigma_m, r_orig, v2_orig, p_orig, cored)
+    lum = compute_luminosities(c2, r_orig, u_orig, rho_orig, mrat, lnL)
 
     iter_cr = iter_dr = 0
     eps_du = float(prec.eps_du)
@@ -156,18 +154,19 @@ def integrate_time_step(state, dt_prop, step_count):
     # May need to move into loop depending on how m is updated
     # Current version just returns m as is
     # m_tot = compute_mass(m)
-    m_tot = state.m_tot
+    m_tot_orig = state.m_tot
 
     while not converged:
         ### Step 1: Energy transport ###
-        p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, dt_prop, eps_du)
+
+        p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, dt_prop, eps_du, c1)
 
         ### Step 2: Reestablish hydrostatic equilibrium ###
         while True:
             if repeat_revir:
-                result = revirialize(r_new, rho_new, p_new, m_tot)
+                result = revirialize(r_new, rho_new, p_new, m_tot_new)
             else:
-                result = revirialize(r_orig, rho_orig, p_cond, m_tot)
+                result = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
 
             # Shell crossing signaled by None
             if result is None:
@@ -178,44 +177,51 @@ def integrate_time_step(state, dt_prop, step_count):
                 repeat_revir = False
                 break # Exit inner loop, redo conduct_heat with original values and smaller dt
             
+            # If no shell crossing, realign
+            r_new, rho_new, p_new, dr_max_new = result
+            v2_new = p_new / rho_new
+            r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+
             # Check dr criterion
             """
             With new step to ensure equilibrium in initialization, no longer a need to accept larger dr in first time step.
             If needed, can reintroduce with 'and (step_count != 1):' in the if statement below.
             """
-            if result[3] > eps_dr:
+            if dr_max_new > eps_dr:
+                print(step_count, dr_max_new)
                 if iter_dr >= max_iter_dr:
                     raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
                 iter_dr += 1
-                r_new, rho_new, p_new, _ = result
                 repeat_revir = True
                 continue # Go to top of inner loop, repeat revirialize with new values
 
             # Both criteria are met, break out of inner and outer loop
-            r_new, rho_new, p_new, dr_max_new = result
             converged = True
             break
 
     ### Step 3: Update state variables ###
-    # m not updated in Lagrangian code
 
-    v2_new = p_new / rho_new
     state.r = r_new
     state.rho = rho_new
     state.p = p_new
     state.v2 = v2_new
+    state.m = m_new
     state.dr_max = dr_max_new
     state.du_max = du_max_new
 
-    state.rmid = 0.5 * (r_new[1:] + r_new[:-1])
+    state.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
     state.u = 1.5 * v2_new
-    state.kn = 1.0 / (state.char.sigma_m_char * np.sqrt(p_new))
     sqrt_v2_new = np.sqrt(v2_new)
     state.trelax = 1.0 / (sqrt_v2_new * rho_new)
 
     state.maxvel    = float(np.max(sqrt_v2_new))
-    state.minkn     = float(np.min(state.kn))
     state.mintrelax = float(np.min(state.trelax))
+
+    state.m_tot     = m_tot_new
+    state.rho_tot   = rho_new.sum(axis=0)
+    state.p_tot     = p_new.sum(axis=0)
+    state.v2_tot    = state.p_tot / state.rho_tot
+    state.u_tot     = 1.5 * state.v2_tot
 
     # Diagnostics
     state.n_iter_cr += iter_cr

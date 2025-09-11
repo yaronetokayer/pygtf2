@@ -98,14 +98,17 @@ def realign(r, rho, v2) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
     # Common log grid bounds
     r1_hat = r[:, 1].min()
     rN_hat = r[:, N].max()
+
     # Build edges: r_hat_1d[0]=0, r_hat_1d[1..N] log between r1_hat and rN_hat
     r_hat_1d = np.empty(N+1, dtype=np.float64)
-    r_hat_1d[0] = 0.0
-    # logspace in [r1_hat, rN_hat] for N points
-    xlo = np.log10(r1_hat)
-    xhi = np.log10(rN_hat)
-    for j in range(N):
-        r_hat_1d[j+1] = 10.0 ** (xlo + (xhi - xlo) * (j / (N - 1.0)))
+    if s == 1: # Single-species fast path: keep the original grid exactly
+        r_hat_1d[:] = r[0]
+    else: # Multiple species
+        r_hat_1d[0] = 0.0
+        xlo = np.log10(r1_hat)
+        xhi = np.log10(rN_hat)
+        for j in range(N):
+            r_hat_1d[j+1] = 10.0 ** (xlo + (xhi - xlo) * (j / (N - 1.0)))
 
     rho_hat = np.empty_like(rho)
     v2_hat  = np.empty_like(v2)

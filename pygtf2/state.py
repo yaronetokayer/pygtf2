@@ -111,11 +111,10 @@ class State:
 
         return state
 
-    """
     @classmethod
     def from_dir(cls, model_dir: str, snapshot: None | int = None):
-        ""
-        Create a State object from an existing model directory.
+        """
+        Create a State object from an existing model directory (multi-species aware).
 
         Parameters
         ----------
@@ -127,54 +126,104 @@ class State:
         Returns
         -------
         State
-            A new State object initialized with data from the specified directory.
-        ""
-        # Check directory exists
+        """
+        # --- basic checks
         p = Path(model_dir)
         if not p.is_dir():
             raise FileNotFoundError(f"Model directory does not exist: {p}")
         
-        # Imports
+        # --- imports
         from pygtf2.io.read import import_metadata, load_snapshot_bundle
         from pygtf2.config import Config
 
+        # --- metadata + snapshot
         meta = import_metadata(p)
-        snapshot_bundle = load_snapshot_bundle(p, snapshot=snapshot)
+        snap = load_snapshot_bundle(p, snapshot=snapshot)
 
-        # Construct config and state
-
+        # --- construct config and state
         config = Config.from_dict(meta)
         if config.io.chatter:
             print("Set config from metadata.")
 
         state = cls(config)
-
         if config.io.chatter:
-            print("Setting state variables from snapshot...")     
+            print("Setting state variables from snapshot...") 
 
-        prec = config.prec
+        # ===== Grid (aligned across species at snapshot time) =====
+        # log_r are the outer edges (i=1..N) in log10; prepend r[0]=0
+        log_r = snap['log_r'].astype(np.float64)        # (N,)
+        r_edges = np.empty(log_r.size + 1, dtype=np.float64)
+        r_edges[0]  = 0.0
+        r_edges[1:] = 10.0**log_r                       # (N+1,)
 
-        state.r = np.insert(10**snapshot_bundle['log_r'].astype(np.float64), 0, 0.0)
-        state.rmid = 10**snapshot_bundle['log_rmid'].astype(np.float64)
-        state.m = np.insert(snapshot_bundle['m'].astype(np.float64), 0, 0.0)
-        state.rho = snapshot_bundle['rho'].astype(np.float64)
-        state.v2 = snapshot_bundle['v2'].astype(np.float64)
-        state.p = snapshot_bundle['p'].astype(np.float64)
-        state.trelax = snapshot_bundle['trelax'].astype(np.float64)
-        state.kn = snapshot_bundle['kn'].astype(np.float64)
-        state.t = float(snapshot_bundle['time'])
-        state.step_count = int(snapshot_bundle['step_count'])
-        state.snapshot_index = int(snapshot_bundle['snapshot_index'])
+        # log_rmid are shell centers (common for all species at snapshot time)
+        rmid_1d = 10.0**snap['log_rmid'].astype(np.float64)   # (N,)
 
-        state.dt = float(prec.eps_dt)
+        # species ordering: use config.spec keys (in insertion order)
+        labels = list(config.spec.keys())
+        s = len(labels)
+        N = rmid_1d.size
+        Np1 = N + 1
+
+        # broadcast per-species grids
+        state.r    = np.broadcast_to(r_edges, (s, Np1)).copy()   # (s, N+1)
+        state.rmid = np.broadcast_to(rmid_1d, (s, N)).copy()     # (s, N)
+
+        # ===== Totals (from file) =====
+        # Totals are single arrays at snapshot time
+        # m_tot is given at outer edges (i=1..N); prepend 0.0 for r[0]
+        m_tot_edges = np.empty(Np1, dtype=np.float64)
+        m_tot_edges[0]  = 0.0
+        m_tot_edges[1:] = snap['m_tot'].astype(np.float64)       # (N,)
+        state.m_tot   = m_tot_edges                               # (N+1,)
+        state.rho_tot = snap['rho_tot'].astype(np.float64)        # (N,)
+        state.v2_tot  = snap['v2_tot'].astype(np.float64)         # (N,)
+        state.p_tot   = snap['p_tot'].astype(np.float64)          # (N,)
+        state.u_tot   = 1.5 * state.v2_tot.copy()
+
+        # ===== Per-species fields =====
+        # Allocate per-species arrays
+        state.m      = np.zeros((s, Np1), dtype=np.float64)
+        state.rho    = np.zeros((s, N),   dtype=np.float64)
+        state.v2     = np.zeros((s, N),   dtype=np.float64)
+        state.p      = np.zeros((s, N),   dtype=np.float64)
+        state.trelax = np.zeros((s, N),   dtype=np.float64)
+        state.u      = np.zeros((s, N),   dtype=np.float64)
+
+        species_block = snap['species']   # dict: name -> dict of arrays
+
+        # For each species name in the config, pull data from snapshot
+        for k, name in enumerate(labels):
+            if name not in species_block:
+                raise KeyError(f"Species '{name}' in config not found in snapshot file.")
+            sd = species_block[name]
+            # m is given at outer edges (length N); prepend 0.0 for r[0]
+            m_edges = np.empty(Np1, dtype=np.float64)
+            m_edges[0]  = 0.0
+            m_edges[1:] = sd['m'].astype(np.float64)
+            state.m[k]      = m_edges
+            state.rho[k]    = sd['rho'].astype(np.float64)
+            state.v2[k]     = sd['v2'].astype(np.float64)
+            state.p[k]      = sd['p'].astype(np.float64)
+            state.trelax[k] = sd['trelax'].astype(np.float64)
+            state.u[k]      = 1.5 * state.v2[k].copy()
+
+        # ===== Time + bookkeeping =====
+        state.t             = float(snap['time'])
+        state.step_count    = int(snap['step_count'])
+        state.snapshot_index= int(snap['snapshot_index'])
+
+        # thresholds / proposed dt
+        prec         = config.prec
+        state.dt     = float(prec.eps_dt)
         state.du_max = float(prec.eps_du)
         state.dr_max = float(prec.eps_dr)
 
-        state.maxvel = float(np.sqrt(np.max(state.v2)))
-        state.minkn = float(np.min(state.kn))
-        state.mintrelax = float(np.min(state.trelax))
+        # quick diagnostics (global)
+        state.maxvel     = float(np.sqrt(np.max(state.v2_tot)))
+        state.mintrelax  = float(np.min(state.trelax))
 
-        # For diagnostics
+        # running diagnostics
         state.n_iter_cr = 0
         state.n_iter_dr = 0
         state.dt_cum = 0.0
@@ -186,7 +235,6 @@ class State:
             print("State loaded.")
 
         return state
-        """
 
     def _set_species_hierarchy(self):
         """
@@ -197,6 +245,8 @@ class State:
             self.frac   : (s,) float64  (sums to 1 within tol; renormalized if needed)
         """
         config = self.config
+        if config.io.chatter:
+            print("Setting species hierarchy...")
         spec = config.spec
         s = config.s
     
@@ -315,7 +365,7 @@ class State:
             for j in range(s):
                 lnL[i,j] = np.log(sim.lnL_param * 2.0 * char.m_s) / (m_part[i] + m_part[j])
 
-        lnL_term = lnL[0,0] if s == 1 else lnL[1,s - 1]
+        lnL_term = lnL[0,0] if s == 1 else lnL[0,s - 1]
 
         t0 = char.v0**3.0 / (12.0 * np.pi * const.gee**2.0 * m_part[kref] * char.rho_s * lnL_term)
         char.t0 = t0 * const.kpc_to_km * const.sec_to_Gyr
@@ -467,20 +517,20 @@ class State:
         r_new = self.r.astype(np.float64, copy=True)
         rho_new = self.rho.astype(np.float64, copy=True)
         p_new = self.p.astype(np.float64, copy=True)
-        m_tot = self.m_tot.astype(np.float64, copy=False)
+        m_tot_new = self.m_tot.astype(np.float64, copy=False)
 
         eps_dr = float(self.config.prec.eps_dr)
 
         i = 0
         while True:
             i += 1
-            r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot)
+            r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
+            v2_new = p_new / rho_new
+            r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
             if dr_max_new < eps_dr:
                 break
             if i >= 100:
                 raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
-            v2_new = p_new / rho_new
-            r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
             
         self.r = r_new
         self.rho = rho_new
@@ -565,15 +615,15 @@ class State:
 
         # Write initial state to disk 
         write_profile_snapshot(self)
-        # write_time_evolution(self)
+        write_time_evolution(self)
         write_log_entry(self, start_step)
 
         # Integrate forward in time until a halting criterion is met
-        # run_until_stop(self, start_step, **kwargs)
+        run_until_stop(self, start_step, **kwargs)
 
         # # Write final state to disk
         write_profile_snapshot(self)
-        # write_time_evolution(self)
+        write_time_evolution(self)
         write_log_entry(self, start_step)
 
         end = _now()
@@ -589,7 +639,7 @@ class State:
         quantity : str, optional
             Key from the time_evolution.txt file to plot on the y-axis.
             Default is 'rho_c'.
-            Options are 't_phys', 'rho_c', 'rho_c_phys', 'v_max', 'v_max_phys', 'kn_min', 'mintrel', 'mintrel_phys'.
+            Options are 'rho_c', 'v_max', 'mintrel', 'r_enc'.
         ylabel : str, optional
             Custom y-axis label. Defaults to quantity.
         logy : bool, optional

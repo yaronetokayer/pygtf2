@@ -33,7 +33,7 @@ def _coerce_scalar(s: str) -> Union[bool, int, float, str]:
 
 def extract_time_evolution_data(filepath):
     """
-    Extract time-evolution data from a pygtfcode time_evolution.txt file.
+    Extract time-evolution data from a pygtf2 time_evolution.txt file.
 
     Parameters
     ----------
@@ -43,40 +43,85 @@ def extract_time_evolution_data(filepath):
     Returns
     -------
     dict
-        Dictionary with keys:
-            't',                # (array) Time in code units
-            't_phys',           # (array) Time in physical units (Gyr)
-            'rho_c',            # (array) Central density in code units
-            'rho_c_phys',       # (array) Central density in physical units (Msun/pc^3)
-            'v_max',            # (array) Maximum circular velocity in code units
-            'v_max_phys'        # (array) Maximum circular velocity in physical units (km/s)
-            'kn_min',           # (array) Minimum Knudsen number
-            'mintrel',          # (array) Minimum relaxation time in code units
-            'mintrel_phys',     # (array) Minimum relaxation time in physical units (Gyr)
-            'model_id'          # (int) Model number
+        {
+          'step'     : array,
+          'time'     : array,
+          'rho_c_tot': array,
+          'v_max'    : array,
+          'mintrel'  : array,
+          'species'  : {
+              'dm': {
+                  'rho_c' : array,
+                  'r01' : array,
+                  'r05' : array,
+                  'r10': array,
+                  'r20': array,
+                  'r50': array,
+                  'r90': array,
+              },
+              'stars': { ... },
+              ...
+          },
+          'model_id' : int
+        }
     """
-    data = np.loadtxt(filepath, usecols=(1, 2, 3, 4, 5, 6, 7, 8, 9), skiprows=1)
-    model_dir = os.path.basename(os.path.dirname(filepath))
-    model_id = int(model_dir.replace("Model", ""))
+    # Parse header to get column names
+    with open(filepath, "r") as f:
+        header_line = f.readline().strip()
+    colnames = header_line.split()
+
+    # Load numeric data
+    data = np.loadtxt(filepath, skiprows=1)
+
     # Handle case where data is 1D (only one row)
-    if data.ndim == 1:
+    if data.ndim == 1: 
         data = data[np.newaxis, :]
-    return {
-        't': data[:, 0],
-        't_phys': data[:, 1],
-        'rho_c': data[:, 2],
-        'rho_c_phys': data[:, 3],
-        'v_max': data[:, 4],
-        'v_max_phys': data[:, 5],
-        'kn_min': data[:, 6],
-        'mintrel': data[:, 7],
-        'mintrel_phys': data[:, 8],
-        'model_id': model_id
+
+    # Map name -> index
+    idx = {name: j for j, name in enumerate(colnames)}
+
+    # Global quantities
+    out = {
+        'step'     : data[:, idx['step']].astype(int),
+        'time'     : data[:, idx['time']],
+        'rho_c_tot': data[:, idx['rho_c_tot']],
+        'v_max'    : data[:, idx['v_max']],
+        'mintrel'  : data[:, idx['mintrel']],
+        'species'  : {},
     }
+
+    # Per-species blocks
+    for name in colnames:
+        if name.startswith('rho_c['):
+            label = name.split('[',1)[1].rstrip(']')
+            out['species'][label] = {
+                'rho_c' : data[:, idx[f'rho_c[{label}]']],
+                'r01' : data[:, idx[f'r01[{label}]']],
+                'r05' : data[:, idx[f'r05[{label}]']],
+                'r10': data[:, idx[f'r10[{label}]']],
+                'r20': data[:, idx[f'r20[{label}]']],
+                'r50': data[:, idx[f'r50[{label}]']],
+                'r90': data[:, idx[f'r90[{label}]']],
+            }
+
+    # Model ID from directory name
+    model_dir = os.path.basename(os.path.dirname(filepath))
+    if model_dir.lower().startswith("model"):
+        try:
+            out['model_id'] = int(model_dir.replace("Model", "").replace("model",""))
+        except ValueError:
+            out['model_id'] = None
+    else:
+        out['model_id'] = None
+
+    return out
 
 def extract_snapshot_indices(model_dir):
     """
     Extract snapshot indices and times from snapshot_conversion.txt.
+
+    Expected columns (with header):
+    index, time, time_Gyr, step
 
     Parameters
     ----------
@@ -85,28 +130,34 @@ def extract_snapshot_indices(model_dir):
 
     Returns
     -------
-    dict
-        Dictionary with keys 'step', 't_t0', and 't_Gyr' containing numpy arrays.
+    dict with:
+      'snapshot_index' : ndarray[int]
+      't'              : ndarray[float]  # time in code units
+      't_Gyr'          : ndarray[float]  # time in Gyr
+      'step_count'     : ndarray[int]
     """
     path = os.path.join(model_dir, "snapshot_conversion.txt")
 
-    data = np.loadtxt(path, usecols=(0, 1, 2, 3), skiprows=1)
+    data = np.loadtxt(path, skiprows=1)
     if data.ndim == 1:
-        # Only one row of data
-        snapshot_index = np.array([int(data[0])])
-        t_t0 = np.array([data[1]])
-        t_Gyr = np.array([data[2]])
-        step = np.array([int(data[3])])
-    else:
-        snapshot_index = data[:, 0].astype(int)
-        t_t0 = data[:, 1]
-        t_Gyr = data[:, 2]
-        step = data[:, 3].astype(int)
+        data = data[np.newaxis, :]
+
+    # Expect exactly 4 columns: index, time, time_Gyr, step
+    if data.shape[1] != 4:
+        raise ValueError(
+            f"snapshot_conversion.txt should have 4 columns; found {data.shape[1]}"
+        )
+
+    snapshot_index = data[:, 0].astype(int)
+    t              = data[:, 1]
+    t_Gyr          = data[:, 2]
+    step_count     = data[:, 3].astype(int)
+
     return {
         'snapshot_index': snapshot_index,
-        't_t0': t_t0,
+        't_t0': t,
         't_Gyr': t_Gyr,
-        'step_count': step
+        'step_count': step_count,
     }
 
 def get_time_conversion(filepath, index, phys=False):
@@ -153,59 +204,90 @@ def extract_snapshot_data(filename):
     Returns
     -------
     dict
-        Dictionary of numpy arrays with keys:
-        'log_r', 'log_rmid', 'm', 'rho', 'v2', 'p', 'trel', 'kn', 'time'
+        {
+          'log_r'    : array,
+          'log_rmid' : array,
+          'm_tot'    : array,
+          'rho_tot'  : array,
+          'v2_tot'   : array,
+          'p_tot'    : array,
+          'species'  : {
+              'dm': {
+                  'm'     : array,
+                  'rho'   : array,
+                  'v2'    : array,
+                  'p'     : array,
+                  'trelax': array,
+              },
+              'stars': { ... }
+          },
+          'time' : float (from snapshot_conversion.txt via get_time_conversion)
+        }
     """
-    data = np.loadtxt(filename, usecols=range(1, 9), skiprows=1)
+    # Read header line
+    with open(filename, "r") as f:
+        header_line = f.readline().strip()
+    colnames = header_line.split()
+
+    # Load numeric data
+    data = np.loadtxt(filename, skiprows=1)
+    if data.ndim == 1:
+        data = data[np.newaxis, :]
+
+    # Map name -> column
+    idx = {name: j for j, name in enumerate(colnames)}
+
+    out = {
+        'log_r'   : data[:, idx['log_r']],
+        'log_rmid': data[:, idx['log_rmid']],
+        'm_tot'   : data[:, idx['m_tot']],
+        'rho_tot' : data[:, idx['rho_tot']],
+        'v2_tot'  : data[:, idx['v2_tot']],
+        'p_tot'   : data[:, idx['p_tot']],
+        'species' : {},
+    }
+
+    # Detect species blocks
+    for name in colnames:
+        if name.startswith('m['):
+            label = name.split('[',1)[1].rstrip(']')
+            out['species'][label] = {
+                'm'     : data[:, idx[f'm[{label}]']],
+                'rho'   : data[:, idx[f'rho[{label}]']],
+                'v2'    : data[:, idx[f'v2[{label}]']],
+                'p'     : data[:, idx[f'p[{label}]']],
+                'trelax': data[:, idx[f'trelax[{label}]']],
+            }
 
     # Extract timestep number from filename and get time
     basename = os.path.basename(filename)
     step = int(basename.replace("profile_", "").replace(".dat", ""))
     t = get_time_conversion(filename, step)
+    out['time'] = t
 
-    return {
-        'log_r': data[:, 0],
-        'log_rmid': data[:, 1],
-        'm': data[:, 2],
-        'rho': data[:, 3],
-        'v2': data[:, 4],
-        'p': data[:, 5],
-        'trelax': data[:, 6],
-        'kn': data[:, 7],
-        'time': t
-    }
+    return out
 
 def import_metadata(model_dir: Union[Path, str]) -> Dict[str, Dict[str, Any]]:
     """
-    Read `<model_dir>/model_metadata.txt` and return a dict-of-dicts.
+    Read `<model_dir>/model_metadata.txt` into a nested dict by indentation.
+    Supports arbitrary nesting like:
 
-    Expected file structure (YAML-like):
-        <header line>
-        ========================================
-        section_name:
-            key: value
-            key: value
-        other_section:
-            key: value
-            ...
+        _mtot: 3e9
+        grid:
+            _ngrid: 200
+        spec:
+            dm:
+                _frac: 1.0
+                _init:
+                    profile: abg
+                    _r_s: 1.0
+            stars:
+                _frac: 0.8
+                ...
 
     Returns
     -------
     dict
-        e.g. {
-          "_init": {...},
-          "grid": {...},
-          "io": {...},
-          "prec": {...},
-          "sim": {...},
-        }
-
-    Raises
-    ------
-    FileNotFoundError
-        If model_dir or model_metadata.txt is missing.
-    ValueError
-        If the file is malformed (e.g., a key-value outside a section).
     """
     pdir = Path(model_dir)
     if not pdir.is_dir():
@@ -214,55 +296,70 @@ def import_metadata(model_dir: Union[Path, str]) -> Dict[str, Dict[str, Any]]:
     meta_path = pdir / "model_metadata.txt"
     if not meta_path.is_file():
         raise FileNotFoundError(f"Missing metadata file: {meta_path}")
-    
-    # Parse
-    out: Dict[str, Dict[str, Any]] = {}
-    current_section: Optional[str] = None
+
+    root: Dict[str, Any] = {}
+    # Stack holds tuples of (indent_level, current_dict)
+    stack: list[tuple[int, Dict[str, Any]]] = [(0, root)]
+
+    def current_dict_for(indent: int) -> Dict[str, Any]:
+        # Pop until top of stack has indent <= requested
+        while stack and stack[-1][0] >= 0 and stack[-1][0] >= indent + 1:
+            stack.pop()
+        # Now ensure the parent dict on stack has indent <= requested
+        while len(stack) > 1 and stack[-1][0] > indent:
+            stack.pop()
+        return stack[-1][1]
 
     with meta_path.open("r", encoding="utf-8") as f:
         for raw in f:
-            line = raw.rstrip("\n")
+            # normalize tabs to 4 spaces
+            line = raw.expandtabs(4).rstrip("\n")
 
-            # Skip blank lines and separators
+            # Skip blanks and separators
             if not line.strip():
                 continue
-            if set(line.strip()) == {"="}:  # e.g., "====="
+            if set(line.strip()) == {"="}:
+                continue
+            # Skip header like "Model 000 Metadata"
+            if line.strip().startswith("Model ") and line.strip().endswith("Metadata"):
                 continue
 
-            # Skip the header line like "Model 004 Metadata"
-            if line.startswith("Model ") and line.endswith(" Metadata"):
-                continue
-
-            # Section header? (e.g., "grid:" / "_init:")
+            # Determine indentation (count leading spaces)
+            indent = len(line) - len(line.lstrip(" "))
             stripped = line.strip()
+
+            # Sanity: require indentation in non-negative multiples
+            if indent < 0:
+                raise ValueError(f"Negative indentation? line: {line!r}")
+
+            # SECTION (ends with ":" and only one colon)
             if stripped.endswith(":") and (":" not in stripped[:-1]):
-                # New section
-                current_section = stripped[:-1]  # drop trailing colon
-                out[current_section] = {}
+                key = stripped[:-1].strip()
+                parent = current_dict_for(indent)
+                # Create or reuse a dict at this key
+                new_container = parent.get(key)
+                if not isinstance(new_container, dict):
+                    new_container = {}
+                    parent[key] = new_container
+                stack.append((indent + 1, new_container))
                 continue
 
-            # Expect key-value inside a section, like "    _ngrid: 200"
-            if current_section is None:
-                # If someone placed a key: value outside any section
-                raise ValueError(
-                    f"Malformed metadata: found key-value outside a section near line: {line!r}"
-                )
+            # KEY: VALUE line (split on first colon)
+            if ":" not in stripped:
+                raise ValueError(f"Malformed metadata line (no colon): {line!r}")
 
-            # Must contain a colon to split key and value
-            if ":" not in line:
-                # Allow odd lines to be ignored? Safer to error out:
-                raise ValueError(
-                    f"Malformed metadata: expected 'key: value' in section '{current_section}', got: {line!r}"
-                )
-
-            # Split on the first colon only, to allow paths with colons (rare) later
-            key_part, value_part = line.split(":", 1)
+            key_part, value_part = stripped.split(":", 1)
             key = key_part.strip()
-            value = _coerce_scalar(value_part)
+            value_str = value_part.strip()
+            if value_str == "None":
+                value = None
+            else:
+                value = _coerce_scalar(value_part)
 
-            out[current_section][key] = value
+            target = current_dict_for(indent)
+            target[key] = value
 
-    return out
+    return root
 
 def load_snapshot_bundle(model_dir: Union[str, Path], snapshot: Optional[int] = None) -> Dict[str, Any]:
     """
@@ -283,7 +380,6 @@ def load_snapshot_bundle(model_dir: Union[str, Path], snapshot: Optional[int] = 
           - 'snapshot_index'       : int  (the index that was loaded)
           - 'current_step_count'   : int  (last row of snapshot_conversion.txt)
           - 'current_time'         : float (simulation units, last row)
-          - 'current_time_Gyr'     : float (Gyr, last row)
     """
     # Basic checks
     pdir = Path(model_dir)
