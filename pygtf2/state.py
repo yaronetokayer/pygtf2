@@ -502,7 +502,7 @@ class State:
         self.v2_tot     = v2_tot
         self.u_tot      = u_tot
 
-    def _ensure_virial_equilibfrium(self):
+    def _ensure_virial_equilibrium(self):
         """
         Fine-tunes initial profile to ensure hydrostatic equilibrium.
         Iteratively runs revirialize() until max |dr/r| < eps_dr.
@@ -559,7 +559,7 @@ class State:
 
         self.r = self._setup_grid()
         self._initialize_grid()
-        self._ensure_virial_equilibfrium()
+        self._ensure_virial_equilibrium()
 
         self.t = 0.0                        # Current time in simulation units
         self.step_count = 0                 # Global integration step counter (never reset)

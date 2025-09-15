@@ -188,7 +188,7 @@ def integrate_time_step(state, dt_prop, step_count):
             If needed, can reintroduce with 'and (step_count != 1):' in the if statement below.
             """
             if dr_max_new > eps_dr:
-                print(step_count, dr_max_new)
+                # print(step_count, dr_max_new)
                 if iter_dr >= max_iter_dr:
                     raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
                 iter_dr += 1
