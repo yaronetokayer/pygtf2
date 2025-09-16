@@ -363,7 +363,7 @@ class State:
         lnL = np.empty((s,s), dtype=np.float64)
         for i in range(s):
             for j in range(s):
-                lnL[i,j] = np.log(sim.lnL_param * 2.0 * char.m_s) / (m_part[i] + m_part[j])
+                lnL[i,j] = np.log(sim.lnL_param * 2.0 * char.m_s / (m_part[i] + m_part[j]) )
 
         lnL_term = lnL[0,0] if s == 1 else lnL[0,s - 1]
 
