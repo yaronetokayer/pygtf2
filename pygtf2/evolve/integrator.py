@@ -164,12 +164,12 @@ def integrate_time_step(state, dt_prop, step_count):
         ### Step 2: Reestablish hydrostatic equilibrium ###
         while True:
             if repeat_revir:
-                result = revirialize(r_new, rho_new, p_new, m_tot_new)
+                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
             else:
-                result = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
+                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
 
-            # Shell crossing signaled by None
-            if result is None:
+            # Shell crossing
+            if status is 'shell_crossing':
                 if iter_cr >= max_iter_cr:
                     raise RuntimeError("Max iterations exceeded for shell crossing in conduction/revirialization step")
                 dt_prop *= 0.5
@@ -178,7 +178,6 @@ def integrate_time_step(state, dt_prop, step_count):
                 break # Exit inner loop, redo conduct_heat with original values and smaller dt
             
             # If no shell crossing, realign
-            r_new, rho_new, p_new, dr_max_new = result
             v2_new = p_new / rho_new
             r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
 

@@ -524,14 +524,50 @@ class State:
         i = 0
         while True:
             i += 1
-            r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
-            v2_new = p_new / rho_new
-            r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
+            # v2_new = p_new / rho_new
+            # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
             if dr_max_new < eps_dr:
                 break
             if i >= 100:
                 raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
-            
+        if chatter:
+            print(f"Hydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+
+        v2_new = p_new / rho_new
+        r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+
+        i = 0
+        print("revir post-realignment")
+        while True:
+            i += 1
+            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
+            # v2_new = p_new / rho_new
+            # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+            if dr_max_new < eps_dr:
+                break
+            if i >= 100:
+                raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
+        if chatter:
+            print(f"Hydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+        
+        i = 0
+        print("revir post-post-realignment")
+        while True:
+            i += 1
+            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
+            # v2_new = p_new / rho_new
+            # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+            if dr_max_new < eps_dr:
+                break
+            if i >= 100:
+                raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
+        if chatter:
+            print(f"Hydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+
+        v2_new = p_new / rho_new
+        r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+
         self.r = r_new
         self.rho = rho_new
         self.p = p_new

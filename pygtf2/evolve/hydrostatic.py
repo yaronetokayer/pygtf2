@@ -1,11 +1,11 @@
 import numpy as np
 from numba import njit, float64, types
 
-def revirialize(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.ndarray, float] | None:
+def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, float | None]:
     """
-    Multi-species re-virialization
-    Solves for radius adjustments and updates physical quantities
-    Assumes all species have aligned radial bins
+    Multi-species re-virialization.
+    Solves for radius adjustments and updates physical quantities for all species.
+    Assumes all species have aligned radial bins.
 
     Parameters
     ----------
@@ -17,17 +17,26 @@ def revirialize(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.ndarray, f
         Shell pressures per species.
     m_tot : ndarray, shape (N+1,)
         Total enclosed mass at edges (shared across species), computed on the
-        aligned grid *before* calling this routine.
+        aligned grid before calling this routine.
 
     Returns
     -------
-    r_new, rho_new, p_new, dr_max : tuple
-        Updated fields per species and the global maximum |dr/r| across species.
+    status : str
+        'ok' if successful, 'shell_crossing' if any radii cross.
+    r_new : ndarray or None, shape (s, N+1)
+        Updated edge radii per species, or None if shell crossing.
+    rho_new : ndarray or None, shape (s, N)
+        Updated shell densities per species, or None if shell crossing.
+    p_new : ndarray or None, shape (s, N)
+        Updated shell pressures per species, or None if shell crossing.
+    dr_max : float or None
+        Global maximum |dr/r| across all species, or None if shell crossing.
 
     Notes
     -----
-    This function solves a tridiagonal system to compute radius corrections, then updates
-    density, pressure, and velocity dispersion accordingly. If any radii cross, the function returns None.
+    This function solves a tridiagonal system to compute radius corrections for each species,
+    then updates density and pressure accordingly. If any radii cross, the function returns
+    'shell_crossing' and None for all outputs except status.
     """
     s, _ = r.shape
     r_new   = np.empty_like(r)
@@ -40,13 +49,13 @@ def revirialize(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.ndarray, f
         xk = solve_tridiagonal_frank(a, b, c, y)
         rk, pk, rhok = _update_r_p_rho(r[k], xk, p[k], rho[k])
         if np.any((rk[1:] - rk[:-1]) <= 0.0):
-            return None
+            return 'shell_crossing', None, None, None, None
         r_new[k]   = rk
         p_new[k]   = pk
         rho_new[k] = rhok
         dr_max = max(dr_max, float(np.max(np.abs(xk))))
 
-    return r_new, rho_new, p_new, dr_max
+    return 'ok', r_new, rho_new, p_new, dr_max
 
 @njit(float64[:](float64[:]), cache=True, fastmath=True)
 def compute_mass(m) -> np.ndarray:
