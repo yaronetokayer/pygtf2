@@ -48,9 +48,6 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
         a, b, c, y = build_tridiag_system(r[k], rho[k], p[k], m_tot)
         # print(np.max(np.abs(y)), np.min(np.abs(y)))
         xk = solve_tridiagonal_frank(a, b, c, y)
-        # print(xk[:3])
-        # xk = _lowpass_filt(xk)
-        # print(xk[:3])
         # xk *= alpha
         rk, pk, rhok = _update_r_p_rho(r[k], xk, p[k], rho[k])
         r_new[k]   = rk
@@ -80,17 +77,6 @@ def compute_mass(m) -> np.ndarray:
     """
 
     return m
-
-@njit(float64[:](float64[:]),
-      cache=True, fastmath=True)
-def _lowpass_filt(x) -> np.ndarray:
-    beta = 0.3 # Filter parameter, max 0.5
-    x_filt = np.empty_like(x)
-    x_filt[0] = x[0]
-    x_filt[-1] = x[-1]
-    x_filt[1:-1] = (1 - beta)*x[1:-1] + (beta / 2)*(x[:-2] + x[2:])
-
-    return x_filt
 
 @njit(types.Tuple((float64[:], float64[:], float64[:]))
       (float64[:], float64[:], float64[:], float64[:]),
