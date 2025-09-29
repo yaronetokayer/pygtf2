@@ -46,14 +46,19 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
 
     for k in range(s):
         a, b, c, y = build_tridiag_system(r[k], rho[k], p[k], m_tot)
+        # print(np.max(np.abs(y)), np.min(np.abs(y)))
         xk = solve_tridiagonal_frank(a, b, c, y)
+        # print(xk[:3])
+        # xk = _lowpass_filt(xk)
+        # print(xk[:3])
+        # xk *= alpha
         rk, pk, rhok = _update_r_p_rho(r[k], xk, p[k], rho[k])
-        if np.any((rk[1:] - rk[:-1]) <= 0.0):
-            return 'shell_crossing', None, None, None, None
         r_new[k]   = rk
         p_new[k]   = pk
         rho_new[k] = rhok
         dr_max = max(dr_max, float(np.max(np.abs(xk))))
+    if np.any((r_new[:,1:] - r_new[:,:-1]) <= 0.0):
+        return 'shell_crossing', r_new, None, None, dr_max
 
     return 'ok', r_new, rho_new, p_new, dr_max
 
@@ -75,6 +80,17 @@ def compute_mass(m) -> np.ndarray:
     """
 
     return m
+
+@njit(float64[:](float64[:]),
+      cache=True, fastmath=True)
+def _lowpass_filt(x) -> np.ndarray:
+    beta = 0.3 # Filter parameter, max 0.5
+    x_filt = np.empty_like(x)
+    x_filt[0] = x[0]
+    x_filt[-1] = x[-1]
+    x_filt[1:-1] = (1 - beta)*x[1:-1] + (beta / 2)*(x[:-2] + x[2:])
+
+    return x_filt
 
 @njit(types.Tuple((float64[:], float64[:], float64[:]))
       (float64[:], float64[:], float64[:], float64[:]),

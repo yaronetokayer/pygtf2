@@ -160,26 +160,32 @@ def integrate_time_step(state, dt_prop, step_count):
         ### Step 1: Energy transport ###
 
         p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, dt_prop, eps_du, c1)
+        # p_cond, du_max_new, dt_prop = np.asarray(state.p, dtype=np.float64), 1e-5, dt_prop # FOR DEBUGGING!
 
         ### Step 2: Reestablish hydrostatic equilibrium ###
         while True:
             if repeat_revir:
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
+                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_orig)
             else:
                 status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
-
+            
             # Shell crossing
-            if status is 'shell_crossing':
+            if status == 'shell_crossing':
+                print("crossed:")
+                print(r_new[:,:10])
+                raise RuntimeError("stopping")
                 if iter_cr >= max_iter_cr:
                     raise RuntimeError("Max iterations exceeded for shell crossing in conduction/revirialization step")
                 dt_prop *= 0.5
                 iter_cr += 1
                 repeat_revir = False
+                print(f"{step_count}: updated dt_prop to {dt_prop}")
+                print(f"dr_max_new: {dr_max_new}")
                 break # Exit inner loop, redo conduct_heat with original values and smaller dt
-            
-            # If no shell crossing, realign
-            v2_new = p_new / rho_new
-            r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+
+            # if step_count > 28:
+            #     print(step_count, repeat_revir, ":")
+            #     plot_r_markers(r_new[:,1:20])
 
             # Check dr criterion
             """
@@ -197,6 +203,12 @@ def integrate_time_step(state, dt_prop, step_count):
             # Both criteria are met, break out of inner and outer loop
             converged = True
             break
+                # If no shell crossing, realign
+        # if step_count > 20:
+        #     print(step_count, "after:")
+        #     plot_r_markers(r_new[:,1:20])
+    v2_new = p_new / rho_new
+    r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
 
     ### Step 3: Update state variables ###
 
@@ -233,3 +245,32 @@ def integrate_time_step(state, dt_prop, step_count):
 
     state.dt = float(dt_prop)
     state.t += float(dt_prop)
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_r_markers(r_slice):
+    """
+    r_slice : array of shape (s, m)
+        Radii for each species (s species, m points each).
+    """
+    s, m = r_slice.shape
+    fig, axes = plt.subplots(s, 1, figsize=(10, 0.75*s), sharex=True)
+
+    if s == 1:
+        axes = [axes]
+
+    for k, ax in enumerate(axes):
+        ax.set_xscale("log")
+        for j, rj in enumerate(r_slice[k]):
+            ax.axvline(rj, color="k", lw=1)
+            ax.text(rj, -0.05, str(j), ha="center", va="top",
+                    transform=ax.get_xaxis_transform(), fontsize=8)
+        ax.set_ylim(0, 1)
+        ax.set_xlim(9e-4, 3e-2)
+        ax.set_yticks([])
+        ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
+
+    axes[-1].set_xlabel("r (log scale)")
+    plt.tight_layout()
+    plt.show()
