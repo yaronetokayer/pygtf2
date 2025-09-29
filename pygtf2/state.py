@@ -521,36 +521,23 @@ class State:
 
         eps_dr = float(self.config.prec.eps_dr)
 
-        j = 0
+        i = 0
         while True:
-            j += 1
-            i = 0
-            while True:
-                i += 1
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
-                # v2_new = p_new / rho_new
-                # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
-                if dr_max_new < eps_dr:
-                    break
-                if i >= 100:
-                    raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
-            if chatter:
-                print(f"j={j}: HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
-
-            v2_new = p_new / rho_new
-            r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
-
-            if i == 1:
+            i += 1
+            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
+            if dr_max_new < eps_dr:
                 break
-
+            if i >= 100:
+                raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
         if chatter:
-            print(f"Hydrostatic equilibrium achieved after {j} realignments. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+            print(f"HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+
+        v2_new = p_new / rho_new
 
         self.r = r_new
         self.rho = rho_new
         self.p = p_new
         self.v2 = v2_new
-        self.m = m_new
         self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
         self.u = 1.5 * v2_new
         self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
@@ -560,9 +547,6 @@ class State:
         self.p_tot      = p_new.sum(axis=0)
         self.v2_tot     = self.p_tot / self.rho_tot
         self.u_tot      = 1.5 * self.v2_tot
-
-        # if chatter:
-        #     print(f"Hydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
 
     def reset(self):
         """

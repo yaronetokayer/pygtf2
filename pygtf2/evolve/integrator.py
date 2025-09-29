@@ -125,6 +125,7 @@ def integrate_time_step(state, dt_prop, step_count):
     from pygtf2.evolve.transport import compute_luminosities, conduct_heat
     from pygtf2.evolve.hydrostatic import revirialize, compute_mass
     from pygtf2.evolve.realign import realign
+    from pygtf2.evolve.diffusion import compute_f_fick, update_m, update_rho_p
 
     # Store state attributes for fast access in loop and to pass into njit functions
     prec = state.config.prec
@@ -154,20 +155,19 @@ def integrate_time_step(state, dt_prop, step_count):
     # May need to move into loop depending on how m is updated
     # Current version just returns m as is
     # m_tot = compute_mass(m)
-    m_tot_orig = state.m_tot
+    m_tot = state.m_tot
 
     while not converged:
         ### Step 1: Energy transport ###
 
         p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, dt_prop, eps_du, c1)
-        # p_cond, du_max_new, dt_prop = np.asarray(state.p, dtype=np.float64), 1e-5, dt_prop # FOR DEBUGGING!
 
         ### Step 2: Reestablish hydrostatic equilibrium ###
         while True:
             if repeat_revir:
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_orig)
+                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot)
             else:
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
+                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot)
             
             # Shell crossing
             if status == 'shell_crossing':
@@ -200,35 +200,54 @@ def integrate_time_step(state, dt_prop, step_count):
                 repeat_revir = True
                 continue # Go to top of inner loop, repeat revirialize with new values
 
-            # Both criteria are met, break out of inner and outer loop
-            converged = True
+            # Both criteria are met, break out of inner loop
             break
-                # If no shell crossing, realign
-        # if step_count > 20:
-        #     print(step_count, "after:")
-        #     plot_r_markers(r_new[:,1:20])
-    v2_new = p_new / rho_new
-    r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
 
-    ### Step 3: Update state variables ###
+        v2_new = p_new / rho_new
+        u_new = 1.5 * v2_new
+
+        ### Step 3: Diffusion ###
+
+        c_d = 0.5
+        F_if, dr_if, Dmax_if = compute_f_fick(r_new, rho_new, v2_new, c_d, use_harmonic_mix=False)
+        m_new, dt_used, dt_cfl = update_m(F_if, m, r_new, dt_prop, dr_if, Dmax_if, cfl_coeff=0.4)
+
+        if not np.all(m_new.sum(axis=0) == m_tot):
+            raise RuntimeError("non-zero net mass flux!")
+        
+        if dt_used == dt_prop:
+            converged = True
+        elif dt_used < dt_prop:
+            # print(dt_used, dt_prop)
+            dt_prop = dt_used
+            continue
+        else:
+            print(dt_used, dt_prop)
+            raise RuntimeError("dt_used > dt_prop!")
+
+    # Update u and p
+    rho_new, p_new = update_rho_p(m_new, u_new, r_new[0])
+
+    ### Step 4: Update state variables ###
 
     state.r = r_new
     state.rho = rho_new
     state.p = p_new
     state.v2 = v2_new
-    state.m = m_new
+    state.u = u_new
     state.dr_max = dr_max_new
     state.du_max = du_max_new
 
+    state.m = m_new
+    state.m_tot = m_new.sum(axis=0)
+
     state.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-    state.u = 1.5 * v2_new
     sqrt_v2_new = np.sqrt(v2_new)
     state.trelax = 1.0 / (sqrt_v2_new * rho_new)
 
     state.maxvel    = float(np.max(sqrt_v2_new))
     state.mintrelax = float(np.min(state.trelax))
 
-    state.m_tot     = m_tot_new
     state.rho_tot   = rho_new.sum(axis=0)
     state.p_tot     = p_new.sum(axis=0)
     state.v2_tot    = state.p_tot / state.rho_tot
@@ -238,39 +257,38 @@ def integrate_time_step(state, dt_prop, step_count):
     state.n_iter_cr += iter_cr
     state.n_iter_dr += iter_dr
     state.dt_cum += float(dt_prop)
-    if step_count != 1:
-        state.dr_max_cum += float(dr_max_new)
+    state.dr_max_cum += float(dr_max_new)
     state.du_max_cum += float(du_max_new)
     state.dt_over_trelax_cum += float(dt_prop / state.mintrelax)
 
     state.dt = float(dt_prop)
     state.t += float(dt_prop)
 
-import matplotlib.pyplot as plt
-import numpy as np
+# import matplotlib.pyplot as plt
+# import numpy as np
 
-def plot_r_markers(r_slice):
-    """
-    r_slice : array of shape (s, m)
-        Radii for each species (s species, m points each).
-    """
-    s, m = r_slice.shape
-    fig, axes = plt.subplots(s, 1, figsize=(10, 0.75*s), sharex=True)
+# def plot_r_markers(r_slice):
+#     """
+#     r_slice : array of shape (s, m)
+#         Radii for each species (s species, m points each).
+#     """
+#     s, m = r_slice.shape
+#     fig, axes = plt.subplots(s, 1, figsize=(10, 0.75*s), sharex=True)
 
-    if s == 1:
-        axes = [axes]
+#     if s == 1:
+#         axes = [axes]
 
-    for k, ax in enumerate(axes):
-        ax.set_xscale("log")
-        for j, rj in enumerate(r_slice[k]):
-            ax.axvline(rj, color="k", lw=1)
-            ax.text(rj, -0.05, str(j), ha="center", va="top",
-                    transform=ax.get_xaxis_transform(), fontsize=8)
-        ax.set_ylim(0, 1)
-        ax.set_xlim(9e-4, 3e-2)
-        ax.set_yticks([])
-        ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
+#     for k, ax in enumerate(axes):
+#         ax.set_xscale("log")
+#         for j, rj in enumerate(r_slice[k]):
+#             ax.axvline(rj, color="k", lw=1)
+#             ax.text(rj, -0.05, str(j), ha="center", va="top",
+#                     transform=ax.get_xaxis_transform(), fontsize=8)
+#         ax.set_ylim(0, 1)
+#         ax.set_xlim(9e-4, 3e-2)
+#         ax.set_yticks([])
+#         ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
 
-    axes[-1].set_xlabel("r (log scale)")
-    plt.tight_layout()
-    plt.show()
+#     axes[-1].set_xlabel("r (log scale)")
+#     plt.tight_layout()
+#     plt.show()

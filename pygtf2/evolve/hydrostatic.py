@@ -3,9 +3,9 @@ from numba import njit, float64, types
 
 def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, float | None]:
     """
-    Multi-species re-virialization.
-    Solves for radius adjustments and updates physical quantities for all species.
-    Assumes all species have aligned radial bins.
+    Multi-species re-virialization using a shared displacement field.
+    Solves one tridiagonal system against totals (rho_tot, p_tot, m_tot)
+    and updates all species on the same new geometry.
 
     Parameters
     ----------
@@ -34,33 +34,45 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
 
     Notes
     -----
-    This function solves a tridiagonal system to compute radius corrections for each species,
-    then updates density and pressure accordingly. If any radii cross, the function returns
-    'shell_crossing' and None for all outputs except status.
+    - Builds totals: rho_tot = sum_k rho_k, p_tot = sum_k p_k.
+    - Solves ONE tridiagonal system for the shared displacement x (e.g. Δln r).
+    - Updates geometry once; per species we conserve shell masses:
+        m_shell_k = rho_k * V_old  -->  rho_new_k = m_shell_k / V_new.
     """
     s, _ = r.shape
-    r_new   = np.empty_like(r)
-    rho_new = np.empty_like(rho)
-    p_new   = np.empty_like(p)
-    dr_max = 0.0
 
-    for k in range(s):
-        a, b, c, y = build_tridiag_system(r[k], rho[k], p[k], m_tot)
-        # print(np.max(np.abs(y)), np.min(np.abs(y)))
-        xk = solve_tridiagonal_frank(a, b, c, y)
-        # print(xk[:3])
-        # xk = _lowpass_filt(xk)
-        # print(xk[:3])
-        # xk *= alpha
-        rk, pk, rhok = _update_r_p_rho(r[k], xk, p[k], rho[k])
-        r_new[k]   = rk
+    # Memory allocation
+    r_new   = np.empty_like(r)
+    p_new   = np.empty_like(p)
+    rho_new = np.empty_like(rho)
+
+    # Use the shared geometry from any species row (assumed aligned already)
+    r_shared = r[0].copy()
+
+    # Totals on the current mesh
+    rho_tot = np.sum(rho, axis=0)              # (N,)
+    p_tot   = np.sum(p, axis=0)                # (N,)
+
+    # Build and solve tridiagonal system using totals
+    a, b, c, y = build_tridiag_system(r_shared, rho_tot, p_tot, m_tot)
+    x = solve_tridiagonal_frank(a, b, c, y)
+
+    # Update species 0 and broadcast its geometry to all (enforces identical r)
+    r0, p0, rho0 = _update_r_p_rho(r_shared, x, p[0], rho[0])
+    r_new[:]   = r0
+    p_new[0]   = p0
+    rho_new[0] = rho0
+
+    if np.any((r0[1:] - r0[:-1]) <= 0.0):
+        return 'shell_crossing', None, None, None, float(np.max(np.abs(x)))
+
+    # Update remaining species on the same interior stretch
+    for k in range(1, s):
+        _, pk, rhok = _update_r_p_rho(r[k], x, p[k], rho[k])
         p_new[k]   = pk
         rho_new[k] = rhok
-        dr_max = max(dr_max, float(np.max(np.abs(xk))))
-    if np.any((r_new[:,1:] - r_new[:,:-1]) <= 0.0):
-        return 'shell_crossing', r_new, None, None, dr_max
 
-    return 'ok', r_new, rho_new, p_new, dr_max
+    return 'ok', r_new, rho_new, p_new, float(np.max(np.abs(x)))
 
 @njit(float64[:](float64[:]), cache=True, fastmath=True)
 def compute_mass(m) -> np.ndarray:
@@ -80,17 +92,6 @@ def compute_mass(m) -> np.ndarray:
     """
 
     return m
-
-@njit(float64[:](float64[:]),
-      cache=True, fastmath=True)
-def _lowpass_filt(x) -> np.ndarray:
-    beta = 0.3 # Filter parameter, max 0.5
-    x_filt = np.empty_like(x)
-    x_filt[0] = x[0]
-    x_filt[-1] = x[-1]
-    x_filt[1:-1] = (1 - beta)*x[1:-1] + (beta / 2)*(x[:-2] + x[2:])
-
-    return x_filt
 
 @njit(types.Tuple((float64[:], float64[:], float64[:]))
       (float64[:], float64[:], float64[:], float64[:]),
