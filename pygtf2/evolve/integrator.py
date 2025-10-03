@@ -205,28 +205,29 @@ def integrate_time_step(state, dt_prop, step_count):
 
         v2_new = p_new / rho_new
         u_new = 1.5 * v2_new
+        converged = True
 
         ### Step 3: Diffusion ###
 
-        c_d = 0.5
-        F_if, dr_if, Dmax_if = compute_f_fick(r_new, rho_new, v2_new, c_d, use_harmonic_mix=False)
-        m_new, dt_used, dt_cfl = update_m(F_if, m, r_new, dt_prop, dr_if, Dmax_if, cfl_coeff=0.4)
+    #     c_d = 0.5
+    #     F_if, dr_if, Dmax_if = compute_f_fick(r_new, rho_new, v2_new, c_d, use_harmonic_mix=False)
+    #     m_new, dt_used, dt_cfl = update_m(F_if, m, r_new, dt_prop, dr_if, Dmax_if, cfl_coeff=0.4)
 
-        if not np.all(m_new.sum(axis=0) == m_tot):
-            raise RuntimeError("non-zero net mass flux!")
+    #     if not np.all(m_new.sum(axis=0) == m_tot):
+    #         raise RuntimeError("non-zero net mass flux!")
         
-        if dt_used == dt_prop:
-            converged = True
-        elif dt_used < dt_prop:
-            # print(dt_used, dt_prop)
-            dt_prop = dt_used
-            continue
-        else:
-            print(dt_used, dt_prop)
-            raise RuntimeError("dt_used > dt_prop!")
+    #     if dt_used == dt_prop:
+    #         converged = True
+    #     elif dt_used < dt_prop:
+    #         # print(dt_used, dt_prop)
+    #         dt_prop = dt_used
+    #         continue
+    #     else:
+    #         print(dt_used, dt_prop)
+    #         raise RuntimeError("dt_used > dt_prop!")
 
-    # Update u and p
-    rho_new, p_new = update_rho_p(m_new, u_new, r_new[0])
+    # # Update u and p
+    # rho_new, p_new = update_rho_p(m_new, u_new, r_new[0])
 
     ### Step 4: Update state variables ###
 
@@ -238,8 +239,8 @@ def integrate_time_step(state, dt_prop, step_count):
     state.dr_max = dr_max_new
     state.du_max = du_max_new
 
-    state.m = m_new
-    state.m_tot = m_new.sum(axis=0)
+    # state.m = m_new
+    # state.m_tot = m_new.sum(axis=0)
 
     state.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
     sqrt_v2_new = np.sqrt(v2_new)

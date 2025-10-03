@@ -128,6 +128,8 @@ def conduct_heat(m, u, rho, lum, lnL, mrat, dt_prop, eps_du, c1) -> tuple[np.nda
                 dudt_hex[n, i] += term
     dudt_hex *= c1
 
+    print(dudt_hex[:, :10])
+
     # ---------- combine, adapt dt if needed ----------
     dudt = dudt_cond + dudt_hex
     du[:, :] = dudt * dt_prop
