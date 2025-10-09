@@ -96,7 +96,7 @@ def compute_time_step(state) -> float:
         The recommended time step.
     """
     if state.step_count == 1:
-        return 1.0e-7
+        return 1.0e-9
     
     prec = state.config.prec
     # Relaxation-limited time step
@@ -124,7 +124,7 @@ def integrate_time_step(state, dt_prop, step_count):
     """
     from pygtf2.evolve.transport import compute_luminosities, conduct_heat
     from pygtf2.evolve.hydrostatic import revirialize, compute_mass
-    from pygtf2.evolve.realign import realign
+    from pygtf2.evolve.realign import realign, realign_extensive
 
     # Store state attributes for fast access in loop and to pass into njit functions
     prec = state.config.prec
@@ -168,7 +168,7 @@ def integrate_time_step(state, dt_prop, step_count):
                 status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_orig)
             else:
                 status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
-            
+
             # Shell crossing
             if status == 'shell_crossing':
                 print("crossed:")
@@ -186,7 +186,8 @@ def integrate_time_step(state, dt_prop, step_count):
             # if step_count > 28:
             #     print(step_count, repeat_revir, ":")
             #     plot_r_markers(r_new[:,1:20])
-
+            # v2_new = p_new / rho_new
+            # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
             # Check dr criterion
             """
             With new step to ensure equilibrium in initialization, no longer a need to accept larger dr in first time step.
@@ -204,31 +205,44 @@ def integrate_time_step(state, dt_prop, step_count):
             converged = True
             break
                 # If no shell crossing, realign
-        # if step_count > 20:
-        #     print(step_count, "after:")
-        #     plot_r_markers(r_new[:,1:20])
+        if step_count > -1:
+            print(step_count, iter_dr)
+            # plot_r_markers(r_new[:,1:10])
+    # v2_new = p_new / rho_new
+    # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
     v2_new = p_new / rho_new
-    r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+    r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
 
     ### Step 3: Update state variables ###
 
-    state.r = r_new
-    state.rho = rho_new
-    state.p = p_new
-    state.v2 = v2_new
-    state.m = m_new
+    state.r = r_real
+    state.rho = rho_real
+    state.p = p_real
+    state.v2 = v2_real
+    state.m = m_real
+    # state.r = r_new
+    # state.rho = rho_new
+    # state.p = p_new
+    # state.v2 = v2_new
+    # state.m = m_new
     state.dr_max = dr_max_new
     state.du_max = du_max_new
 
-    state.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-    state.u = 1.5 * v2_new
-    sqrt_v2_new = np.sqrt(v2_new)
-    state.trelax = 1.0 / (sqrt_v2_new * rho_new)
+    state.rmid = 0.5 * (r_real[:, 1:] + r_real[:, :-1])
+    state.u = u_real
+    sqrt_v2_real = np.sqrt(v2_real)
+    state.trelax = 1.0 / (sqrt_v2_real * rho_real)
+    # state.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
+    # state.u = 1.5 * v2_new
+    # sqrt_v2_new = np.sqrt(v2_new)
+    # state.trelax = 1.0 / (sqrt_v2_new * rho_new)
 
-    state.maxvel    = float(np.max(sqrt_v2_new))
+    state.maxvel    = float(np.max(sqrt_v2_real))
+    # state.maxvel    = float(np.max(sqrt_v2_new))
     state.mintrelax = float(np.min(state.trelax))
 
-    state.m_tot     = m_tot_new
+    state.m_tot     = m_tot_real
+    # state.m_tot     = m_tot_new
     state.rho_tot   = rho_new.sum(axis=0)
     state.p_tot     = p_new.sum(axis=0)
     state.v2_tot    = state.p_tot / state.rho_tot
@@ -267,7 +281,7 @@ def plot_r_markers(r_slice):
             ax.text(rj, -0.05, str(j), ha="center", va="top",
                     transform=ax.get_xaxis_transform(), fontsize=8)
         ax.set_ylim(0, 1)
-        ax.set_xlim(9e-4, 3e-2)
+        ax.set_xlim(3e-3, 5e2)
         ax.set_yticks([])
         ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
 

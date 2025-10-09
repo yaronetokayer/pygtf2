@@ -129,3 +129,98 @@ def realign(r, rho, v2) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
     r_hat = np.broadcast_to(r_hat_1d, (s, N+1)).copy()
 
     return r_hat, rho_hat, v2_hat, p_hat, m_hat, m_tot_hat
+
+def realign_extensive(r, rho, v2):
+    """
+    Conservative realignment of species onto a common edge grid by remapping
+    *extensives* (mass and thermal energy) via overlaps in q=r^3.
+
+    Parameters
+    ----------
+    r   : (s, N+1) per-species edges (after revir; misaligned across species)
+    rho : (s, N)   per-species shell densities
+    v2  : (s, N)   per-species shell velocity-dispersion^2 (p/rho)
+
+    Returns
+    -------
+    r_hat      : (N+1,) common edges
+    rho_hat    : (s, N)  per-species densities on r_hat
+    u_hat      : (s, N)  per-species specific internal energy
+    v2_hat     : (s, N)  per-species p/rho
+    p_hat      : (s, N)  per-species pressure
+    m_hat_edges : (s, N+1)  per-species cumulative mass on r_har
+    m_tot_hat  : (N+1,)  total enclosed mass at edges (cumulative over species)
+    """
+    s, Np1 = r.shape
+    N = Np1 -1
+
+    #--- Compute geometry
+    r_hat_min = r[:, 1].min()
+    r_hat_max = r[:, Np1-1].max()
+    r_hat = np.geomspace(r_hat_min, r_hat_max, num=Np1-1)
+    r_hat = np.insert(r_hat, 0, 0.0)
+
+    q_old = r**3
+    q_hat = r_hat**3
+
+    V_hat = (q_hat[1:] - q_hat[:-1]) / 3.0
+
+    #--- Overlap deposit
+    # Compute overlap volumes for each species and shell
+    # and update extensive quantities
+
+    m_hat = np.zeros((s, N), dtype=np.float64)  # mass per cell, shape (s, N_hat)
+    E_hat = np.zeros((s, N), dtype=np.float64)
+
+    for k in range(s):
+        i, j = 0, 0
+        while i < N and j < N:
+            left  = max(q_old[k, i],   q_hat[j])
+            right = min(q_old[k, i+1], q_hat[j+1])
+            dq = right - left
+            if dq > 0.0:
+                dV = dq / 3.0
+                m_hat[k, j] += rho[k, i] * dV
+                E_hat[k, j] += rho[k, i] * 1.5 * v2[k, i] * dV
+
+            # advance the interval that ends first
+            if q_old[k, i+1] <= q_hat[j+1]:
+                i += 1
+            else:
+                j += 1
+    
+    #--- Check for consistency
+    # For each species, compare input and output total mass, rescale if needed
+    for k in range(s):
+        m_in  = np.sum(rho[k] * (q_old[k,1:] - q_old[k,:-1]) / 3.0)
+        m_out = np.sum(m_hat[k])
+        if not np.isclose(m_in, m_out, rtol=1e-12, atol=1e-14):
+            scale = m_in / m_out if m_out != 0 else 1.0
+            print("WARNING: rescaling masses in realign step")
+            m_hat[k] *= scale
+            E_hat[k] *= scale
+
+    #--- Recover intensives
+    rho_hat = np.zeros_like(m_hat)
+    u_hat   = np.zeros_like(m_hat)
+    v2_hat  = np.zeros_like(m_hat)
+    p_hat   = np.zeros_like(m_hat)
+    
+    # guard against empty cells
+    if np.any(m_hat <= 0.0):
+        raise RuntimeError("Bins with zero mass in realignment step")
+    rho_hat = m_hat / V_hat[np.newaxis, :]
+    u_hat   = E_hat / m_hat
+    v2_hat  = 2.0 * u_hat / 3.0
+    p_hat   = 2.0 * rho_hat * u_hat / 3.0
+
+    # total enclosed mass at edges (sum species, cumulative)
+    # Cumulative mass profile per species (on edges)
+    m_hat_edges = np.zeros((s, Np1), dtype=np.float64)
+    m_hat_edges[:, 1:] = np.cumsum(m_hat, axis=1)
+    # Total cumulative mass profile (sum over species)
+    m_tot_hat = np.sum(m_hat_edges, axis=0)
+
+    r_hat = np.broadcast_to(r_hat, (s, Np1)).copy()
+
+    return r_hat, rho_hat, u_hat, v2_hat, p_hat, m_hat_edges, m_tot_hat

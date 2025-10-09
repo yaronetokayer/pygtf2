@@ -573,7 +573,7 @@ class State:
 
         self.r = self._setup_grid()
         self._initialize_grid()
-        self._ensure_virial_equilibrium()
+        # self._ensure_virial_equilibrium()
 
         self.t = 0.0                        # Current time in simulation units
         self.step_count = 0                 # Global integration step counter (never reset)

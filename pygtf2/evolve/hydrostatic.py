@@ -1,7 +1,7 @@
 import numpy as np
 from numba import njit, float64, types
 
-def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, float | None]:
+def revirialize_OLD(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, float | None]:
     """
     Multi-species re-virialization.
     Solves for radius adjustments and updates physical quantities for all species.
@@ -59,6 +59,73 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
 
     return 'ok', r_new, rho_new, p_new, dr_max
 
+def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, float | None]:
+    """
+    Multi-species re-virialization.
+    Solves for radius adjustments and updates physical quantities for all species.
+    Assumes all species have aligned radial bins.
+
+    Parameters
+    ----------
+    r : ndarray, shape (s, N+1)
+        Edge radii per species.
+    rho : ndarray, shape (s, N)
+        Shell densities per species.
+    p : ndarray, shape (s, N)
+        Shell pressures per species.
+    m_tot : ndarray, shape (N+1,)
+        Total enclosed mass at edges (shared across species), computed on the
+        aligned grid before calling this routine.
+
+    Returns
+    -------
+    status : str
+        'ok' if successful, 'shell_crossing' if any radii cross.
+    r_new : ndarray or None, shape (s, N+1)
+        Updated edge radii per species, or None if shell crossing.
+    rho_new : ndarray or None, shape (s, N)
+        Updated shell densities per species, or None if shell crossing.
+    p_new : ndarray or None, shape (s, N)
+        Updated shell pressures per species, or None if shell crossing.
+    dr_max : float or None
+        Global maximum |dr/r| across all species, or None if shell crossing.
+
+    Notes
+    -----
+    This function solves a tridiagonal system to compute radius corrections for each species,
+    then updates density and pressure accordingly. If any radii cross, the function returns
+    'shell_crossing' and None for all outputs except status.
+    """
+    s, n = r.shape
+    r_new   = np.empty_like(r)
+    rho_new = np.empty_like(rho)
+    p_new   = np.empty_like(p)
+    x = np.empty((s, n - 2), dtype=np.float64)
+
+    z = 1.0
+    d0 = 1e-5
+
+    for k in range(s):
+        a, b, c, y = build_tridiag_system(r[k], rho[k], p[k], m_tot)
+        xk = solve_tridiagonal_frank(a, b, c, y)
+        x[k] = xk
+    d = max_frac_diff_x(x)
+    alpha = 1.0 / (1 + d/d0)**z
+    dr_max = float(np.max(np.abs(x)))
+    # print(d, alpha, dr_max)
+
+    for k in range(s):
+        xk = alpha * x[k]
+        rk, pk, rhok = _update_r_p_rho(r[k], xk, p[k], rho[k])
+        r_new[k]   = rk
+        p_new[k]   = pk
+        rho_new[k] = rhok
+
+    if np.any((r_new[:,1:] - r_new[:,:-1]) <= 0.0):
+        return 'shell_crossing', r_new, None, None, dr_max
+
+    return 'ok', r_new, rho_new, p_new, dr_max
+
 @njit(float64[:](float64[:]), cache=True, fastmath=True)
 def compute_mass(m) -> np.ndarray:
     """
@@ -110,7 +177,7 @@ def _update_r_p_rho(r, x, p, rho) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 @njit(types.Tuple((float64[:], float64[:], float64[:], float64[:]))
       (float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
-def build_tridiag_system(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray]:
+def build_tridiag_system(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Construct the tridiagonal matrix system (A·X = Y) used in the revirialization step.
 
@@ -212,3 +279,39 @@ def solve_tridiagonal_frank(a, b, c, y) -> np.ndarray:
         u[i] -= gam[i+1] * u[i+1]
 
     return u
+
+@njit(float64 (float64[:, :]), fastmath=True, cache=True)
+def max_frac_diff(r) -> float:
+    """
+    Computes the maximum absolute fractional difference between
+    the r arrays of any pair of species
+    """
+    n, m = r.shape
+    max_frac = 0.0
+    for i in range(n):
+        for j in range(i + 1, n):
+            for k in range(m):
+                avg = 0.5 * (r[i, k] + r[j, k])
+                if avg != 0.0:
+                    frac_diff = abs(r[i, k] - r[j, k]) / avg
+                else:
+                    frac_diff = 0.0
+                if frac_diff > max_frac:
+                    max_frac = frac_diff
+    return max_frac
+
+@njit(float64(float64[:, :]), fastmath=True, cache=True)
+def max_frac_diff_x(x) -> float:
+    """
+    Computes the maximum absolute difference between the
+    proposed fractional displacements (Δr/r) across species.
+    """
+    n, m = x.shape
+    max_diff = 0.0
+    for i in range(n):
+        for j in range(i + 1, n):
+            for k in range(m):
+                diff = abs(x[i, k] - x[j, k])
+                if diff > max_diff:
+                    max_diff = diff
+    return max_diff
