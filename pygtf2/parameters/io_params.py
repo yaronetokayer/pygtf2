@@ -30,7 +30,7 @@ class IOParams:
                  base_dir: str = None, 
                  nlog: int = 100000,
                  drho_prof : float = 0.1,
-                 drho_tevol : float = 0.01,
+                 drho_tevol : float = 0.0001,
                  overwrite: bool = True,
                  chatter: bool = True,
                  ):

@@ -1,220 +1,330 @@
 import numpy as np
-from numba import njit, float64, types
+from numba import njit, prange, float64, int64, types
 
-def compute_f_fick_test(r_edges, rho, v2, c_d) -> np.ndarray:
-    v2_avg = 0.5 * (v2[:,:-1] + v2[:,:-1])
-    rho_avg = 0.5 * (rho[:,:-1] + rho[:,:-1])
-    dr = 0.5 * (r_edges[0,:-2] - r_edges[0,2:])
-    mass_frac = 0.5 * (rho[:]) / rho.sum(axis=0)
-
+# --------- Numba-compiled core ----------
+# Return convention:
+#   status_code: 0 = 'ok', 1 = 'reduce_dt'
+#   arrays are always returned (wrapper can convert to None when reduce_dt)
 @njit(
-    types.Tuple((float64[:, :], float64[:], float64[:]))(
-        float64[:, :],  # r_edges: (s, N+1) -- shared geometry, rows identical
-        float64[:, :],  # rho:     (s, N)
-        float64[:, :],  # v2:      (s, N)
-        float64,        # c_d:     scalar prefactor
-        types.boolean,  # use_species_Dk: if True, use per-species D_k; else D_mix
-        types.boolean,  # use_harmonic_mix: only used when use_species_Dk=False
+    (float64[:, :],  # m_in      (s, N+1)
+     float64[:],     # m_tot_in  (N+1,)
+     float64[:, :],  # r_in      (s, N+1)  (we'll use r_in[0])
+     float64[:, :],  # rho_in    (s, N)
+     float64[:, :],  # v2_in     (s, N)
+     float64[:, :],  # u_in      (s, N)
+     float64[:, :],  # p_in      (s, N)
+     float64         # dt_in
     ),
-    cache=True, fastmath=True
+    cache=True, fastmath=True, parallel=True
 )
-def compute_f_fick(r_edges, rho, v2, c_d, use_species_Dk, use_harmonic_mix) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute species-wise Fick flux at interior edges with zero-net-flux projection.
-
-    Returns
-    -------
-    F_if    : (s, N-1)  species flux at interior **edges** j=1..N-1 (outward +)
-    dr_if   : (N-1,)    center-to-center spacings for gradients
-    Dmax_if : (N-1,)    max_k D_k at each interface (for CFL control)
-    """
-    s, nedge = r_edges.shape
-    N = nedge - 1
-    r0 = r_edges[0]
+def burgers_step_numba_core(m_in, m_tot_in, r_in, rho_in, v2_in, u_in, p_in, dt_in):
+    s, Np1 = m_in.shape
+    N = Np1 - 1
     tiny = np.finfo(np.float64).tiny
 
-    # Cell centers and center-to-center spacing
-    rc    = 0.5 * (r0[1:] + r0[:-1])      # (N,)
-    dr_if = rc[1:] - rc[:-1]              # (N-1,)
+    # Collapse r_in to shape (N+1,) for easy compatibility with future versions
+    r1 = r_in[0]  # shape (N+1,)
 
-    # Totals and mass fractions
-    rho_tot = np.zeros(N, dtype=np.float64)
-    for i in range(N):
+    # Precompute shell volumes (N,)
+    shell_volumes = (r1[1:]**3 - r1[:-1]**3) / 3.0
+
+    # --- Find w and flux per species at each internal interface
+    F_if = np.zeros((s, N-1))        # fluxes per interface (between cells)
+    dt_cfl_arr = np.full(N-1, 1e300) # per-interface CFL; reduce after loop
+
+    # Parallelized loop over interfaces i = 1..N-1
+    for i in prange(1, N):
+        r_if = float(r1[i])
+        dr_if = float(0.5 * (r1[i+1] - r1[i-1]))
+        if dr_if < tiny:
+            dr_if = tiny
+
+        # Interface-averaged states
+        # shapes: (s,)
+        rho_if = 0.5 * (rho_in[:, i-1] + rho_in[:, i])
+        v_if = np.sqrt(0.5 * (v2_in[:, i-1] + v2_in[:, i]))
+        p_L = p_in[:, i-1]
+        p_R = p_in[:, i]
+
+        m_tot_if = float(m_tot_in[i])
+        rho_tot_if = float(np.sum(rho_if))
+        if rho_tot_if < tiny:
+            rho_tot_if = tiny
+
+        # b_k = d/dr(p_k) + rho_k*g
+        dpdr = (p_R - p_L) / dr_if
+        grav = rho_if * m_tot_if / max(r_if * r_if, tiny)
+        b = dpdr + grav
+
+        # A_kj construction (s x s)
+        # A_kj = (rho_k * rho_j / rho_tot) * nu_kj
+        # K_kk = - sum_{j != k} K_kj
+        A = np.zeros((s, s))
+        nu_if = np.maximum(tiny, v_if * rho_if)  # ~ rho*sqrt(v2)
+        for k in range(s):
+            akk = 0.0
+            for j in range(s):
+                if j != k:
+                    # harmonic mean of friction terms
+                    denom = (nu_if[k] + nu_if[j])
+                    if denom <= tiny:
+                        K_kj = 0.0
+                    else:
+                        K_kj = (rho_if[k] * rho_if[j] / rho_tot_if)
+                        K_kj *= 2.0 * nu_if[k] * nu_if[j] / denom
+                    A[k, j] = K_kj
+                    akk -= K_kj
+            A[k, k] = akk
+
+        # Replace bottom row with zero net flux constraint
+        b[-1] = 0.0
+        for j in range(s):
+            A[-1, j] = rho_if[j]
+
+        # Solve Aw = b
+        w = np.linalg.solve(A, b)
+
+        # CFL per-interface
+        w_abs_max = np.max(np.abs(w))
+        if w_abs_max < tiny:
+            w_abs_max = tiny
+        dt_cfl_arr[i-1] = 0.5 * dr_if / w_abs_max  # 0.5 safety factor
+
+        # Mass flux at this interface: F_k = rho_k * w_k
+        F_if[:, i-1] = rho_if * w
+
+    # global CFL
+    dt_cfl = dt_cfl_arr.min()
+
+    # If CFL violated, signal to reduce dt and skip the (costly) update;
+    # still return shaped arrays (copies of inputs) for type stability.
+    status_code = int64(0)
+    if dt_in > dt_cfl:
+        status_code = int64(1)
+
+    # --- Update extensive and intensive variables (if not reducing dt, it still runs;
+    #     but the wrapper can discard results on reduce_dt to match your original API)
+    A_if = r1[1:-1]**2        # (N-1,)
+    V_cell = shell_volumes    # (N,)
+
+    # Mass and density
+    m_out = m_in.copy()
+    # m_out[:, 1:-1] update uses F_if * A_if * dt_in
+    for col in range(N-1):
+        a = A_if[col] * dt_in
+        for k in range(s):
+            m_out[k, 1 + col] = m_out[k, 1 + col] - F_if[k, col] * a
+
+    m_tot_out = np.empty_like(m_tot_in)
+    for j in range(N+1):
+        # sum over species
         acc = 0.0
         for k in range(s):
-            acc += rho[k, i]
-        rho_tot[i] = acc if acc > tiny else tiny
+            acc += m_out[k, j]
+        m_tot_out[j] = acc
 
-    X = np.zeros((s, N), dtype=np.float64)
-    for i in range(N):
-        inv = 1.0 / rho_tot[i]
+    m_cell_out = np.empty((s, N))
+    for j in range(N):
         for k in range(s):
-            X[k, i] = rho[k, i] * inv
+            m_cell_out[k, j] = m_out[k, 1 + j] - m_out[k, j]
 
-    # Interface averages
-    rho_if = np.zeros((s, N-1), dtype=np.float64)
-    v2_if  = np.zeros((s, N-1), dtype=np.float64)
-    X_if   = np.zeros((s, N-1), dtype=np.float64)
-    rho_tot_if = np.zeros(N-1, dtype=np.float64)
-
-    for i in range(N-1):
-        rt = 0.0
+    rho_out = np.empty_like(rho_in)
+    for j in range(N):
+        invV = 1.0 / V_cell[j]
         for k in range(s):
-            rij = 0.5 * (rho[k, i] + rho[k, i+1])
-            vij = 0.5 * (v2[k, i]  + v2[k, i+1])
-            rho_if[k, i] = rij if rij > tiny else tiny
-            v2_if[k, i]  = vij if vij > tiny else tiny
-            X_if[k, i]   = 0.5 * (X[k, i] + X[k, i+1])
-            rt += rho_if[k, i]
-        rho_tot_if[i] = rt if rt > tiny else tiny
+            rho_out[k, j] = m_cell_out[k, j] * invV
 
-    # Per-species interface diffusivities from your trelax proxy:
-    # trelax_k ~ 1/(sqrt(v2_k)*rho_k)  =>  D_k ~ c_d * v2_k * trelax_k ~ c_d * sqrt(v2_k)/rho_k
-    Dk_if = np.zeros((s, N-1), dtype=np.float64)
-    Dmax_if = np.zeros(N-1, dtype=np.float64)
-    for i in range(N-1):
-        dmax = 0.0
+    # Energy advection
+    E_in = np.empty_like(u_in)
+    for j in range(N):
         for k in range(s):
-            d = c_d * np.sqrt(v2_if[k, i]) / rho_if[k, i]
-            Dk_if[k, i] = d
-            if d > dmax:
-                dmax = d
-        Dmax_if[i] = dmax if dmax > tiny else tiny
+            E_in[k, j] = (m_in[k, 1 + j] - m_in[k, j]) * u_in[k, j]
 
-    # Gradient of X_k using center-to-center spacing
-    gradX = np.zeros((s, N-1), dtype=np.float64)
-    for i in range(N-1):
-        inv_dr = 1.0 / (dr_if[i] if dr_if[i] > tiny else tiny)
-        for k in range(s):
-            gradX[k, i] = (X[k, i+1] - X[k, i]) * inv_dr
-
-    # Raw Fick fluxes
-    f_raw = np.zeros((s, N-1), dtype=np.float64)
-    if use_species_Dk:
-        # Level 2: per-species D_k
-        for i in range(N-1):
-            coeff = - rho_tot_if[i]
-            for k in range(s):
-                f_raw[k, i] = coeff * Dk_if[k, i] * gradX[k, i]
-    else:
-        # Level 1: single mixture D_mix
-        Dmix_if = np.zeros(N-1, dtype=np.float64)
-        if not use_harmonic_mix:
-            # arithmetic: sum_k X_k D_k
-            for i in range(N-1):
-                acc = 0.0
-                for k in range(s):
-                    acc += X_if[k, i] * Dk_if[k, i]
-                Dmix_if[i] = acc
-        else:
-            # harmonic: 1 / sum_k X_k / D_k
-            for i in range(N-1):
-                acc = 0.0
-                for k in range(s):
-                    d = Dk_if[k, i]
-                    if d < tiny:
-                        d = tiny
-                    acc += X_if[k, i] / d
-                if acc < tiny:
-                    acc = tiny
-                Dmix_if[i] = 1.0 / acc
-
-        for i in range(N-1):
-            coeff = - rho_tot_if[i] * Dmix_if[i]
-            for k in range(s):
-                f_raw[k, i] = coeff * gradX[k, i]
-
-    # Zero-net-flux projection at each interface: enforce sum_k F_k = 0
-    F_if = np.zeros((s, N-1), dtype=np.float64)
-    for i in range(N-1):
-        sumn = 0.0
-        for k in range(s):
-            sumn += f_raw[k, i]
-        for k in range(s):
-            F_if[k, i] = f_raw[k, i] - X_if[k, i] * sumn
-
-    return F_if, dr_if, Dmax_if
-
-@njit(
-    types.Tuple((float64[:, :], float64, float64))(
-        float64[:, :],  # F_if: (s, N-1)
-        float64[:, :],  # m_encl_edges: (s, N+1)
-        float64[:, :],  # r_edges: (s, N+1) -- shared geometry
-        float64,        # dt_prop
-        float64[:],     # dr_if: (N-1,)
-        float64[:],     # Dmax_if: (N-1,)  max_k D_k at each interface
-        float64         # cfl_coeff (e.g. 0.4)
-    ),
-    cache=True, fastmath=True
-)
-def update_m(F_if, m_encl_edges, r_edges, dt_prop, dr_if, Dmax_if, cfl_coeff) -> tuple[np.ndarray, float, float]:
-    """
-    Conservative update of per-species ENCLOSED mass at edges using interface fluxes,
-    with a CFL check for diffusion and automatic dt reduction if necessary.
-
-    Returns
-    -------
-    m_encl_new : (s, N+1)  updated enclosed mass
-    dt_used    : float      min(dt_prop, dt_cfl)
-    dt_cfl     : float      global CFL bound computed this step
-    """
-    s, nedge = r_edges.shape
-    N = nedge - 1
-    r0 = r_edges[0]
-
-    tiny = np.finfo(np.float64).tiny
-    # Global CFL: dt_cfl = cfl_coeff * min_i dr_i^2 / Dmax_i
-    dt_cfl = 1.0e300
-    for i in range(N-1):
-        d = Dmax_if[i]
-        if d < tiny:
-            continue
-        bound = cfl_coeff * (dr_if[i] * dr_if[i]) / d
-        if bound < dt_cfl:
-            dt_cfl = bound
-    if dt_cfl == 1.0e300:
-        dt_cfl = dt_prop  # effectively no constraint if all D were tiny
-
-    dt_used = dt_prop if dt_prop <= dt_cfl else dt_cfl
-
-    # Prepare output and copy boundaries unchanged (zero-flux BCs)
-    m_new = np.empty_like(m_encl_edges)
-    for k in range(s):
-        m_new[k, 0] = m_encl_edges[k, 0]
-        m_new[k, N] = m_encl_edges[k, N]
-
-    # Update interior edges j=1..N-1; interface index i_if=j-1
+    # Upwind face energies Phi[:, j-1] uses edge j (1..N-1)
+    Phi = np.empty_like(F_if)  # (s, N-1)
     for j in range(1, N):
-        A = r0[j] * r0[j]
-        i_if = j - 1
+        col = j - 1
         for k in range(s):
-            m_new[k, j] = m_encl_edges[k, j] - F_if[k, i_if] * A * dt_used
+            u_face = u_in[k, j-1] if (F_if[k, col] >= 0.0) else u_in[k, j]
+            Phi[k, col] = F_if[k, col] * u_face
 
-    return m_new, dt_used, dt_cfl
+    E_out = E_in.copy()
+    for col in range(N-1):
+        a = A_if[col] * dt_in
+        for k in range(s):
+            E_out[k, col]     = E_out[k, col]     - Phi[k, col] * a
+            E_out[k, col + 1] = E_out[k, col + 1] + Phi[k, col] * a
+
+    # Other intensive quantities
+    u_out = np.zeros_like(u_in)
+    for j in range(N):
+        for k in range(s):
+            mc = m_cell_out[k, j]
+            u_out[k, j] = (E_out[k, j] / mc) if (mc > 0.0) else 0.0
+
+    v2_out = u_out / 1.5
+    p_out  = (2.0/3.0) * rho_out * u_out
+
+    # dt_prop: either input dt (ok) or a slightly reduced CFL suggestion (to match original)
+    dt_prop = dt_in if status_code == 0 else (0.95 * dt_cfl)
+
+    return status_code, m_out, m_tot_out, rho_out, u_out, p_out, v2_out, dt_prop
 
 
-@njit(
-    types.Tuple((float64[:, :], float64[:, :]))(
-        float64[:, :],  # m_encl_edges_new (s, N+1)
-        float64[:, :],  # u (s, N)  specific internal energies
-        float64[:]      # r_edges (N+1,) shared
-    ),
-    cache=True, fastmath=True
-)
-def update_rho_p(m_encl_edges_new, u, r_edges) -> tuple[np.ndarray, np.ndarray]:
-    s, nedge = m_encl_edges_new.shape
-    N = nedge - 1
+# --------- Thin Python wrapper (preserves your original return convention) ----------
+def burgers_step(m_in, m_tot_in, r_in, rho_in, v2_in, u_in, p_in, dt_in):
+    """
+    Drop-in wrapper preserving:
+      Returns: (status_str, m_out, m_tot_out, rho_out, u_out, p_out, v2_out, dt_prop)
+      where on 'reduce_dt' arrays are returned as None (like your original).
+    """
+    status_code, m_out, m_tot_out, rho_out, u_out, p_out, v2_out, dt_prop = \
+        burgers_step_numba_core(m_in, m_tot_in, r_in, rho_in, v2_in, u_in, p_in, float(dt_in))
 
-    rho_new = np.empty((s, N), dtype=np.float64)
-    p_new   = np.empty((s, N), dtype=np.float64)
+    if status_code == 1:
+        return 'reduce_dt', None, None, None, None, None, None, dt_prop
+    else:
+        return 'ok', m_out, m_tot_out, rho_out, u_out, p_out, v2_out, dt_prop
 
-    # shell volumes
-    V = (1.0/3.0) * (r_edges[1:]**3 - r_edges[:-1]**3)
 
-    for k in range(s):
-        for i in range(N):
-            m_shell = m_encl_edges_new[k, i+1] - m_encl_edges_new[k, i]
-            rho_new[k, i] = m_shell / V[i]
-            p_new[k, i]   = rho_new[k, i] * u[k, i]
 
-    return rho_new, p_new
+# import numpy as np
+# from numba import njit, float64, types
+
+# def burgers_step(m_in, m_tot_in, r_in, rho_in, v2_in, u_in, p_in, dt_in):
+#     """
+#     Compute new arrays due to mass diffusion from Burgers momentum equation
+
+#     Arguments
+#     ---------
+#     m_in : ndarray, shape (s, N+1)
+#         Enclosed mass per species.
+#     m_tot_in : ndarray, shape (N+1,)
+#         Total enclosed mass profile.
+#     r_in : ndarray, shape (s, N+1)
+#         Edge radii per species.
+#         (in future version, this will be shape (N+1,), since it's the same for all species).
+#     rho_in : ndarray, shape (s, N)
+#         Shell densities per species.
+#     v2_in : ndarray, shape (s, N)
+#         Shell v2 per species.
+#     u_in : ndarray, shape (s, N)
+#         Shell specific internal energy per species.
+#     p_in : ndarray, shape (s, N)
+#         Shell pressure per species.
+#     dt_in : float
+#         Current proposed time step
+
+#     Returns
+#     -------
+#     status, m_out, m_tot_out, rho_out, u_out, p_out, v2_out, dt_prop
+#     """
+
+#     s, Np1 = m_in.shape
+#     N = Np1 - 1
+#     tiny = np.finfo(np.float64).tiny
+
+#     # Collapse r_in to shape (N+1,) for easy compatibility with future versions
+#     r_in = r_in[0]
+
+#     #--- Input validation
+#     assert np.allclose(m_tot_in, np.sum(m_in, axis=0))
+#     assert np.allclose(1.5 * v2_in, u_in)
+
+#     shell_volumes = (r_in[1:]**3 - r_in[:-1]**3) / 3.0  # shape (N,)
+#     expected_rho = m_in[:,1:] - m_in[:,:-1]
+#     expected_rho = expected_rho / shell_volumes  # shape (s, N)
+#     assert np.allclose(rho_in, expected_rho)
+
+#     #--- Find w and flux per species at each internal interface
+#     F_if = np.zeros((s, N-1))        # to store fluxes per interface
+#     dt_cfl = 1e300
+
+#     for i in range(1, N):
+#         # Interface values
+#         r_if = float(r_in[i])
+#         dr_if = float(0.5 * (r_in[i+1] - r_in[i-1]))
+#         if dr_if < tiny: dr_if = tiny
+
+#         rho_if = 0.5 * (rho_in[:,i-1] + rho_in[:,i])        # shape (s,)
+#         v_if = np.sqrt(0.5 * (v2_in[:,i-1] + v2_in[:,i]))   # shape (s,)
+#         p_L = p_in[:,i-1]
+#         p_R = p_in[:,i]
+
+#         m_tot_if = float(m_tot_in[i])
+#         rho_tot_if = float(np.sum(rho_if)); rho_tot_if = max(rho_tot_if, tiny)
+
+#         # b_k = d/dr(p_k) + rho_k*g
+#         dpdr = (p_R - p_L) / dr_if
+#         grav = rho_if * m_tot_if / max(r_if * r_if, tiny)
+#         b = dpdr + grav
+
+#         # A_kj = (rho_k * rho_j / rho_tot) * nu_kj
+#         # A_kj = Kjk; K_kk = -\sum_{j\neq k} K_kj
+#         A = np.zeros((s,s))
+#         nu_if = np.maximum(tiny, v_if * rho_if) # nu ~ 1/trelax = rho*sqrt(v2)
+#         for k in range(s):
+#             for j in range(s):
+#                 if j != k:
+#                     K_kj = (rho_if[k] * rho_if[j] / rho_tot_if)
+#                     K_kj *= 2 * nu_if[k] * nu_if[j] / (nu_if[k] + nu_if[j]) # Harmonic mean of friction terms
+                
+#                     A[k,j] = K_kj
+#                     A[k,k] -= K_kj
+
+#         # Replace bottom row of matrix equation with zero net flux constraint
+#         b[-1] = 0.0
+#         A[-1,:] = rho_if[:]
+
+#         # Solve Aw = b
+#         w = np.linalg.solve(A,b)
+
+#         # Update dt_cfl
+#         w_abs_max = max(tiny, np.max(np.abs(w)))
+#         dt_cfl = min(dt_cfl, 0.5 * dr_if / w_abs_max) # 0.5 safety factor
+
+#         # Mass flux at this interface: F_k = rho_k * w_k
+#         F_if[:, i-1] = rho_if * w
+
+#     # Check for mass conservation
+#     if not np.allclose(F_if.sum(axis=0), 0.0):
+#         print("WARNING: mass may not conserved in Burger's step")
+
+#     #--- Check CFL condition is met with current dt_in
+#     if dt_in > dt_cfl:
+#         return 'reduce_dt', None, None, None, None, None, None, 0.95 * dt_cfl
+    
+#     #--- Update extensive and intensive variables
+#     A_if = r_in[1:-1]**2
+#     V_cell = (r_in[1:]**3 - r_in[:-1]**3) / 3.0
+
+#     # Mass and density
+#     m_out = m_in.copy()
+#     m_out[:, 1:-1] = m_in[:, 1:-1] - F_if * A_if[np.newaxis, :] * dt_in
+#     m_tot_out = m_out.sum(axis=0)
+
+#     m_cell_out = m_out[:, 1:] - m_out[:, :-1]     # (s, N)
+#     rho_out = m_cell_out / V_cell[np.newaxis, :]
+
+#     # Energy advection
+#     E_in  = (m_in[:, 1:] - m_in[:, :-1]) * u_in
+
+#     # Build upwind face energies: Phi[:, j-1] uses edge j (1..N-1)
+#     Phi = np.empty_like(F_if)                    # (s, N-1)
+#     for j in range(1, N):
+#         col = j - 1
+#         # upwind donor: if F>0, donor is left shell (j-1); else right shell (j)
+#         u_face = np.where(F_if[:, col] >= 0.0, u_in[:, j-1], u_in[:, j])
+#         Phi[:, col] = F_if[:, col] * u_face
+
+#     E_out = E_in.copy()
+#     E_out[:,:-1]    -= Phi * A_if[np.newaxis, :] * dt_in
+#     E_out[:,1:]     += Phi * A_if[np.newaxis, :] * dt_in
+
+#     # Other intensive quantities
+#     with np.errstate(divide='ignore', invalid='ignore'):
+#         u_out = np.where(m_cell_out > 0.0, E_out / m_cell_out, 0.0)
+#     v2_out = u_out / 1.5
+#     p_out  = (2.0/3.0) * rho_out * u_out
+
+#     return ('ok', m_out, m_tot_out, rho_out, u_out, p_out, v2_out, dt_in)

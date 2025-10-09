@@ -124,8 +124,7 @@ def integrate_time_step(state, dt_prop, step_count):
     """
     from pygtf2.evolve.transport import compute_luminosities, conduct_heat
     from pygtf2.evolve.hydrostatic import revirialize, compute_mass
-    from pygtf2.evolve.realign import realign
-    from pygtf2.evolve.diffusion import compute_f_fick, update_m, update_rho_p
+    from pygtf2.evolve.diffusion import burgers_step
 
     # Store state attributes for fast access in loop and to pass into njit functions
     prec = state.config.prec
@@ -143,13 +142,12 @@ def integrate_time_step(state, dt_prop, step_count):
     # Compute current luminosity array
     lum = compute_luminosities(c2, r_orig, u_orig, rho_orig, mrat, lnL)
 
-    iter_cr = iter_dr = 0
+    iter_cr = 0
     eps_du = float(prec.eps_du)
     eps_dr = float(prec.eps_dr)
     max_iter_cr = prec.max_iter_cr
     max_iter_dr = prec.max_iter_dr
     converged = False
-    repeat_revir = False
 
     # Compute total enclosed mass including baryons, perturbers, etc.
     # May need to move into loop depending on how m is updated
@@ -158,8 +156,10 @@ def integrate_time_step(state, dt_prop, step_count):
     m_tot = state.m_tot
 
     while not converged:
-        ### Step 1: Energy transport ###
+        iter_dr = 0
+        repeat_revir = False
 
+        ### Step 1: Energy transport ###
         p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, dt_prop, eps_du, c1)
 
         ### Step 2: Reestablish hydrostatic equilibrium ###
@@ -205,29 +205,19 @@ def integrate_time_step(state, dt_prop, step_count):
 
         v2_new = p_new / rho_new
         u_new = 1.5 * v2_new
-        converged = True
 
         ### Step 3: Diffusion ###
-
-    #     c_d = 0.5
-    #     F_if, dr_if, Dmax_if = compute_f_fick(r_new, rho_new, v2_new, c_d, use_harmonic_mix=False)
-    #     m_new, dt_used, dt_cfl = update_m(F_if, m, r_new, dt_prop, dr_if, Dmax_if, cfl_coeff=0.4)
-
-    #     if not np.all(m_new.sum(axis=0) == m_tot):
-    #         raise RuntimeError("non-zero net mass flux!")
+        status, m_new, m_tot_new, rho_new, u_new, p_new, v2_new, dt_cfl = burgers_step(m, m_tot, r_new, rho_new, v2_new, u_new, p_new, dt_prop)
         
-    #     if dt_used == dt_prop:
-    #         converged = True
-    #     elif dt_used < dt_prop:
-    #         # print(dt_used, dt_prop)
-    #         dt_prop = dt_used
-    #         continue
-    #     else:
-    #         print(dt_used, dt_prop)
-    #         raise RuntimeError("dt_used > dt_prop!")
-
-    # # Update u and p
-    # rho_new, p_new = update_rho_p(m_new, u_new, r_new[0])
+        if status == 'reduce_dt':
+            # print(step_count, iter_dr)
+            # print("reduct_dt", step_count, dt_prop, dt_cfl)
+            dt_prop = dt_cfl
+        
+        elif status == 'ok':
+            converged = True
+            if step_count % 100 == 0:
+                print(f"Converged step {step_count}", end='\r', flush=True)
 
     ### Step 4: Update state variables ###
 
@@ -239,8 +229,8 @@ def integrate_time_step(state, dt_prop, step_count):
     state.dr_max = dr_max_new
     state.du_max = du_max_new
 
-    # state.m = m_new
-    # state.m_tot = m_new.sum(axis=0)
+    state.m = m_new
+    state.m_tot = m_tot_new
 
     state.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
     sqrt_v2_new = np.sqrt(v2_new)
