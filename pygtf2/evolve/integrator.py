@@ -124,7 +124,7 @@ def integrate_time_step(state, dt_prop, step_count):
     """
     from pygtf2.evolve.transport import compute_luminosities, conduct_heat
     from pygtf2.evolve.hydrostatic import revirialize, compute_mass
-    from pygtf2.evolve.diffusion import burgers_step
+    from pygtf2.evolve.burgers import burgers_transport
 
     # Store state attributes for fast access in loop and to pass into njit functions
     prec = state.config.prec
@@ -142,12 +142,9 @@ def integrate_time_step(state, dt_prop, step_count):
     # Compute current luminosity array
     lum = compute_luminosities(c2, r_orig, u_orig, rho_orig, mrat, lnL)
 
-    iter_cr = 0
     eps_du = float(prec.eps_du)
     eps_dr = float(prec.eps_dr)
-    max_iter_cr = prec.max_iter_cr
     max_iter_dr = prec.max_iter_dr
-    converged = False
 
     # Compute total enclosed mass including baryons, perturbers, etc.
     # May need to move into loop depending on how m is updated
@@ -155,37 +152,20 @@ def integrate_time_step(state, dt_prop, step_count):
     # m_tot = compute_mass(m)
     m_tot = state.m_tot
 
-    while not converged:
+    while True:
         iter_dr = 0
-        repeat_revir = False
 
         ### Step 1: Energy transport ###
         p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, dt_prop, eps_du, c1)
 
         ### Step 2: Reestablish hydrostatic equilibrium ###
-        while True:
-            if repeat_revir:
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot)
-            else:
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot)
-            
+        status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot)
+
+        while True:            
             # Shell crossing
             if status == 'shell_crossing':
-                print("crossed:")
-                print(r_new[:,:10])
-                raise RuntimeError("stopping")
-                if iter_cr >= max_iter_cr:
-                    raise RuntimeError("Max iterations exceeded for shell crossing in conduction/revirialization step")
-                dt_prop *= 0.5
-                iter_cr += 1
-                repeat_revir = False
-                print(f"{step_count}: updated dt_prop to {dt_prop}")
-                print(f"dr_max_new: {dr_max_new}")
-                break # Exit inner loop, redo conduct_heat with original values and smaller dt
-
-            # if step_count > 28:
-            #     print(step_count, repeat_revir, ":")
-            #     plot_r_markers(r_new[:,1:20])
+                print(r_new)
+                raise RuntimeError(f"{step_count}: Revir failed. Status {status}.")
 
             # Check dr criterion
             """
@@ -193,12 +173,12 @@ def integrate_time_step(state, dt_prop, step_count):
             If needed, can reintroduce with 'and (step_count != 1):' in the if statement below.
             """
             if dr_max_new > eps_dr:
-                # print(step_count, dr_max_new)
                 if iter_dr >= max_iter_dr:
                     raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
                 iter_dr += 1
-                repeat_revir = True
-                continue # Go to top of inner loop, repeat revirialize with new values
+                # Repeat revirialize with new values and go to top of inner loop
+                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot)
+                continue
 
             # Both criteria are met, break out of inner loop
             break
@@ -206,33 +186,35 @@ def integrate_time_step(state, dt_prop, step_count):
         v2_new = p_new / rho_new
         u_new = 1.5 * v2_new
 
-        ### Step 3: Diffusion ###
-        status, m_new, m_tot_new, rho_new, u_new, p_new, v2_new, dt_cfl = burgers_step(m, m_tot, r_new, rho_new, v2_new, u_new, p_new, dt_prop)
+        ### Step 3: Collisional drift ###
+        status, m_new, m_tot_new, rho_new, u_new, p_new, v2_new, dt_cfl, cfl_lim = (
+            burgers_transport(
+            m, m_tot, r_new, rho_new, v2_new, u_new, p_new, dt_prop
+            )
+        )
         
         if status == 'reduce_dt':
-            # print(step_count, iter_dr)
-            # print("reduct_dt", step_count, dt_prop, dt_cfl)
+            # Reduce dt and redo conduction at top of outer loop
             dt_prop = dt_cfl
+            continue
         
         elif status == 'ok':
-            converged = True
-            if step_count % 100 == 0:
-                print(f"Converged step {step_count}", end='\r', flush=True)
+            break
 
     ### Step 4: Update state variables ###
 
-    state.r = r_new
-    state.rho = rho_new
-    state.p = p_new
-    state.v2 = v2_new
-    state.u = u_new
+    state.r     = r_new
+    state.rho   = rho_new
+    state.p     = p_new
+    state.v2    = v2_new
+    state.u     = u_new
     state.dr_max = dr_max_new
     state.du_max = du_max_new
 
-    state.m = m_new
+    state.m     = m_new
     state.m_tot = m_tot_new
 
-    state.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
+    state.rmid  = 0.5 * (r_new[1:] + r_new[:-1])
     sqrt_v2_new = np.sqrt(v2_new)
     state.trelax = 1.0 / (sqrt_v2_new * rho_new)
 
@@ -245,15 +227,18 @@ def integrate_time_step(state, dt_prop, step_count):
     state.u_tot     = 1.5 * state.v2_tot
 
     # Diagnostics
-    state.n_iter_cr += iter_cr
     state.n_iter_dr += iter_dr
     state.dt_cum += float(dt_prop)
     state.dr_max_cum += float(dr_max_new)
     state.du_max_cum += float(du_max_new)
     state.dt_over_trelax_cum += float(dt_prop / state.mintrelax)
+    state.cfl_lim_cum += float(cfl_lim)
 
     state.dt = float(dt_prop)
     state.t += float(dt_prop)
+
+    if step_count % 500 == 0:
+        print(f"Completed step {step_count}", end='\r', flush=True)
 
 # import matplotlib.pyplot as plt
 # import numpy as np

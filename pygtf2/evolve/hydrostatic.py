@@ -9,8 +9,8 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
 
     Parameters
     ----------
-    r : ndarray, shape (s, N+1)
-        Edge radii per species.
+    r : ndarray, shape (N+1,)
+        Edge radii.
     rho : ndarray, shape (s, N)
         Shell densities per species.
     p : ndarray, shape (s, N)
@@ -23,8 +23,8 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
     -------
     status : str
         'ok' if successful, 'shell_crossing' if any radii cross.
-    r_new : ndarray or None, shape (s, N+1)
-        Updated edge radii per species, or None if shell crossing.
+    r_new : ndarray or None, shape (N+1,)
+        Updated edge radii, or None if shell crossing.
     rho_new : ndarray or None, shape (s, N)
         Updated shell densities per species, or None if shell crossing.
     p_new : ndarray or None, shape (s, N)
@@ -39,7 +39,7 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
     - Updates geometry once; per species we conserve shell masses:
         m_shell_k = rho_k * V_old  -->  rho_new_k = m_shell_k / V_new.
     """
-    s, _ = r.shape
+    s, _ = rho.shape
 
     # Memory allocation
     r_new   = np.empty_like(r)
@@ -47,28 +47,27 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
     rho_new = np.empty_like(rho)
 
     # Use the shared geometry from any species row (assumed aligned already)
-    r_shared = r[0].copy()
+    # r_shared = r[0].copy()
 
     # Totals on the current mesh
     rho_tot = np.sum(rho, axis=0)              # (N,)
     p_tot   = np.sum(p, axis=0)                # (N,)
 
     # Build and solve tridiagonal system using totals
-    a, b, c, y = build_tridiag_system(r_shared, rho_tot, p_tot, m_tot)
+    a, b, c, y = build_tridiag_system(r, rho_tot, p_tot, m_tot)
     x = solve_tridiagonal_frank(a, b, c, y)
 
-    # Update species 0 and broadcast its geometry to all (enforces identical r)
-    r0, p0, rho0 = _update_r_p_rho(r_shared, x, p[0], rho[0])
-    r_new[:]   = r0
+    # Update species 0
+    r_new, p0, rho0 = _update_r_p_rho(r, x, p[0], rho[0])
     p_new[0]   = p0
     rho_new[0] = rho0
 
-    if np.any((r0[1:] - r0[:-1]) <= 0.0):
+    if np.any((r_new[1:] - r_new[:-1]) <= 0.0) or np.any(r_new[1:] < 0.0):
         return 'shell_crossing', None, None, None, float(np.max(np.abs(x)))
 
-    # Update remaining species on the same interior stretch
+    # Update remaining species
     for k in range(1, s):
-        _, pk, rhok = _update_r_p_rho(r[k], x, p[k], rho[k])
+        _, pk, rhok = _update_r_p_rho(r, x, p[k], rho[k])
         p_new[k]   = pk
         rho_new[k] = rhok
 

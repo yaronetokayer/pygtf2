@@ -389,9 +389,7 @@ class State:
 
         Returns
         -------
-        r : ndarray, shape (s, ngrid+1)
-            r[k, :] are the edge radii for species k, with r[k,0] = 0.0 and
-            r[k,1:] logarithmically spaced between rmin and rmax (common grid).
+        r : ndarray, shape (ngrid+1,)
         """
         config = self.config
         if config.io.chatter:
@@ -409,10 +407,7 @@ class State:
         edges[0] = 0.0
         edges[1:] = 10.0 ** np.linspace(xlgrmin, xlgrmax, ngrid, dtype=np.float64)
 
-        # Tile/broadcast for each species: r[k, :] = edges
-        r = np.broadcast_to(edges, (config.s, ngrid + 1)).copy()
-
-        return r
+        return edges
     
     def _initialize_grid(self):
         """
@@ -438,11 +433,12 @@ class State:
             print("Initializing profiles...")
 
         r = self.r.astype(np.float64, copy=False)
-        r_mid = 0.5 * (r[:, 1:] + r[:, :-1])          # Midpoint of each shell
-        dr3 = r[:, 1:]**3 - r[:, :-1]**3              # Volume difference per shell
+        r_mid = 0.5 * (r[1:] + r[:-1])          # Midpoint of each shell
+        dr3 = r[1:]**3 - r[:-1]**3              # Volume difference per shell
 
-        m = np.zeros_like(r, dtype=np.float64)
-        v2 = np.zeros_like(r_mid, dtype=np.float64)
+        s = config.s
+        m = np.zeros((s, r.shape[0]), dtype=np.float64)
+        v2 = np.zeros((s, r_mid.shape[0]), dtype=np.float64)
 
         # Compute m and v2 for all radial bins
         for i, name in enumerate(labels):
@@ -456,10 +452,10 @@ class State:
                 rho_interp = self.rho_interp[name]
                 rcut = self.rcut[name]
             
-            m_base = menc(self.r[i, 1:], init, prec, 
+            m_base = menc(self.r[1:], init, prec, 
                           chatter=chatter, pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp)
             m[i, 1:] = frac[i] * m_base                 # Scale by mass fraction
-            v2[i, :] = sigr(r_mid[i, :], init, prec,
+            v2[i, :] = sigr(r_mid[:], init, prec,
                             chatter=chatter, grid=config.grid, rcut=rcut, 
                             pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp)
 
@@ -471,10 +467,10 @@ class State:
         # Central smoothing for NFW profile
         for i, name in enumerate(labels):
             if spec[name].init.profile == 'nfw':
-                r1 = r[i, 1]
+                r1 = r[1]
                 rho_c_ideal = 1.0 / (r1 * (1.0 + r1)**2)
                 rho[i, 0] = 2.0 * rho_c_ideal - rho[i, 1]
-                dr_ratio = (r[i, 2] - r[i, 0]) / (r[i, 3] - r[i, 1])
+                dr_ratio = (r[2] - r[0]) / (r[3] - r[1])
                 p[i, 0] = p[i, 1] - dr_ratio * (p[i, 2] - p[i, 1])
                 v2[i, 0] = p[i, 0] / rho[i, 0]
                 u[i, 0] = 1.5 * v2[i, 0]
@@ -508,7 +504,6 @@ class State:
         Iteratively runs revirialize() until max |dr/r| < eps_dr.
         """
         from pygtf2.evolve.hydrostatic import revirialize
-        from pygtf2.evolve.realign import realign
         chatter = self.config.io.chatter
 
         if chatter:
@@ -517,18 +512,21 @@ class State:
         r_new = self.r.astype(np.float64, copy=True)
         rho_new = self.rho.astype(np.float64, copy=True)
         p_new = self.p.astype(np.float64, copy=True)
-        m_tot_new = self.m_tot.astype(np.float64, copy=False)
+        m_tot = self.m_tot.astype(np.float64, copy=False)
 
         eps_dr = float(self.config.prec.eps_dr)
+        lim = 100
 
         i = 0
         while True:
             i += 1
-            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
+            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot)
+            if status != 'ok':
+                raise RuntimeError(f"Failed to achieve HE. Status code {status}")
             if dr_max_new < eps_dr:
                 break
-            if i >= 100:
-                raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
+            if i >= lim:
+                raise RuntimeError(f"Failed to achieve HE in {lim} iterations")
         if chatter:
             print(f"HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
 
@@ -538,11 +536,10 @@ class State:
         self.rho = rho_new
         self.p = p_new
         self.v2 = v2_new
-        self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
+        self.rmid = 0.5 * (r_new[1:] + r_new[:-1])
         self.u = 1.5 * v2_new
         self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
         
-        self.m_tot      = m_tot_new
         self.rho_tot    = rho_new.sum(axis=0)
         self.p_tot      = p_new.sum(axis=0)
         self.v2_tot     = self.p_tot / self.rho_tot
@@ -570,12 +567,12 @@ class State:
         self.mintrelax = float(np.min(self.trelax))
 
         # For diagnostics
-        self.n_iter_cr = 0
         self.n_iter_dr = 0
         self.dt_cum = 0.0
         self.dr_max_cum = 0.0
         self.du_max_cum = 0.0
         self.dt_over_trelax_cum = 0.0
+        self.cfl_lim_cum = 0.0
 
         if config.io.chatter:
             print("State initialized.")

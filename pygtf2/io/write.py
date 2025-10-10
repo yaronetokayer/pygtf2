@@ -104,21 +104,21 @@ def write_log_entry(state, start_step):
     if ( step - start_step ) % nlog != 0:
         nlog = ( step - start_step ) % nlog
 
-    header = f"{'step':>10}  {'time':>12}  {'<dt>':>12}  {'rho_c':>12}  {'v_max':>12}  {'<dt lim>':>8}  {'<dr lim>':>8}  {'<du lim>':>8}  {'<n_iter_cr>':>11}  {'<n_iter_dr>':>11}\n"
-    new_line = f"{step:10d}  {state.t:12.6e}  {state.dt_cum / nlog:12.6e}  {state.rho_tot[0]:12.6e}  {state.maxvel:12.6e}  {state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}  {state.dr_max_cum / prec.eps_dr / nlog:8.2e}  {state.du_max_cum / prec.eps_du / nlog:8.2e}  {state.n_iter_cr / nlog:11.5e}  {state.n_iter_dr / nlog:11.5e}\n"
+    header = f"{'step':>10}  {'time':>12}  {'<dt>':>12}  {'rho_c':>12}  {'v_max':>12}  {'<dt lim>':>8}  {'<dr lim>':>8}  {'<du lim>':>8}  {'<cfl lim>':>9}  {'<n_iter_dr>':>11}\n"
+    new_line = f"{step:10d}  {state.t:12.6e}  {state.dt_cum / nlog:12.6e}  {state.rho_tot[0]:12.6e}  {state.maxvel:12.6e}  {state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}  {state.dr_max_cum / prec.eps_dr / nlog:8.2e}  {state.du_max_cum / prec.eps_du / nlog:8.2e}  {state.cfl_lim_cum / nlog:9.3e}  {state.n_iter_dr / nlog:11.5e}\n"
 
     if step == start_step:
-        new_line = new_line[:26] + f"         N/A" +  new_line[38:66] + f"       N/A       N/A       N/A          N/A          N/A\n"
+        new_line = new_line[:26] + f"         N/A" +  new_line[38:66] + f"       N/A       N/A       N/A        N/A          N/A\n"
 
     _update_file(filepath, header, new_line, step)
 
     state.n_iter_du = 0
-    state.n_iter_cr = 0
     state.n_iter_dr = 0
     state.dt_cum = 0.0
     state.du_max_cum = 0.0
     state.dr_max_cum = 0.0
     state.dt_over_trelax_cum = 0.0
+    state.cfl_lim_cum = 0.0
 
     if chatter:
         if step == 0:
@@ -149,11 +149,11 @@ def write_profile_snapshot(state, initialize=False):
     filename = os.path.join(io.base_dir, io.model_dir, f"profile_{state.snapshot_index}.dat")
 
     # Use species 0 for the r columns.
-    r_common    = state.r[0]
-    rmid_common = state.rmid[0]
-    N = r_common.size - 1
-    labels = list(state.labels)
-    s = len(labels)
+    r       = state.r
+    rmid    = state.rmid
+    N       = r.size - 1
+    labels  = list(state.labels)
+    s       = len(labels)
 
     # Build header
     header_cols = [
@@ -183,8 +183,8 @@ def write_profile_snapshot(state, initialize=False):
         for i in range(N):
             row = [
                 f"{i:6d}",
-                f"{np.log10(r_common[i+1]): 13.6e}",
-                f"{np.log10(rmid_common[i]): 13.6e}",
+                f"{np.log10(r[i+1]): 13.6e}",
+                f"{np.log10(rmid[i]): 13.6e}",
                 f"{state.m_tot[i+1]: 13.6e}",
                 f"{state.rho_tot[i]: 13.6e}",
                 f"{state.v2_tot[i]: 13.6e}",
@@ -256,7 +256,6 @@ def write_time_evolution(state):
     step = state.step_count
 
     labels = list(state.labels)
-    s = len(labels)
 
     # Build header
     header = [
@@ -298,7 +297,7 @@ def write_time_evolution(state):
         rho_c_k = float(rho[k, 0])
 
         # Expecting: array([r_1%, r_5%, r_10%, r_20%, r_50%, r_90%]) in code units
-        radii = np.asarray(mass_fraction_radii(r[k], m[k], percents), dtype=np.float64)
+        radii = np.asarray(mass_fraction_radii(r, m[k], percents), dtype=np.float64)
 
         row.extend([
             f"{rho_c_k: 13.6e}",

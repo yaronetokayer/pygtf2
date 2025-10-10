@@ -2,7 +2,7 @@ import numpy as np
 from numba import njit, float64, types
 
 @njit(
-    float64[:, :](float64, float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:,:]),
+    float64[:, :](float64, float64[:], float64[:, :], float64[:, :], float64[:], float64[:,:]),
     cache=True, fastmath=True
 )
 def compute_luminosities(c2, r, u, rho, mrat, lnL) -> np.ndarray:
@@ -30,8 +30,8 @@ def compute_luminosities(c2, r, u, rho, mrat, lnL) -> np.ndarray:
     L: ndarray
         Luminosities at each shell boundary (same length as r).
     """
-    s, Np1 = r.shape
-    L = np.zeros((s, Np1), np.float64) # Initialization takes care of boundary conditions
+    s, N = rho.shape
+    L = np.zeros((s, N+1), np.float64) # Initialization takes care of boundary conditions
 
     for n in range(s):
         # Closure relations
@@ -41,9 +41,9 @@ def compute_luminosities(c2, r, u, rho, mrat, lnL) -> np.ndarray:
         # Centered interface values
         rhom = 0.5 * (rho_n[1:] + rho_n[:-1]) # (N-1,)
         umed = 0.5 * (u_n[1:]   + u_n[:-1])   # (N-1,)
-        dTdr = 2.0 * (u_n[1:] - u_n[:-1]) / (r[n, 2:] - r[n, :-2])
+        dTdr = 2.0 * (u_n[1:] - u_n[:-1]) / (r[2:] - r[:-2])
 
-        fac = (r[n, 1:-1]**2) * (rhom / np.sqrt(umed))
+        fac = (r[1:-1]**2) * (rhom / np.sqrt(umed))
         pref = (-c2) * (mrat[n] * lnL[n,n])
 
         L[n, 1:-1] = pref * fac * dTdr
