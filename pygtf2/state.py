@@ -508,7 +508,7 @@ class State:
         Iteratively runs revirialize() until max |dr/r| < eps_dr.
         """
         from pygtf2.evolve.hydrostatic import revirialize
-        from pygtf2.evolve.realign import realign
+        from pygtf2.evolve.realign import realign, realign_extensive
         chatter = self.config.io.chatter
 
         if chatter:
@@ -538,7 +538,8 @@ class State:
                 print(f"j={j}: HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
 
             v2_new = p_new / rho_new
-            r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+            # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+            r_new, rho_new, u_new, v2_new, p_new, m_new, m_tot_new = realign_extensive(r_new, rho_new, v2_new)
 
             if i == 1:
                 break
@@ -552,7 +553,7 @@ class State:
         self.v2 = v2_new
         self.m = m_new
         self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-        self.u = 1.5 * v2_new
+        self.u = u_new
         self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
         
         self.m_tot      = m_tot_new
@@ -573,7 +574,7 @@ class State:
 
         self.r = self._setup_grid()
         self._initialize_grid()
-        # self._ensure_virial_equilibrium()
+        self._ensure_virial_equilibrium()
 
         self.t = 0.0                        # Current time in simulation units
         self.step_count = 0                 # Global integration step counter (never reset)

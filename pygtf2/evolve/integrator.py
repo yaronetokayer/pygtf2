@@ -147,8 +147,6 @@ def integrate_time_step(state, dt_prop, step_count):
     eps_dr = float(prec.eps_dr)
     max_iter_cr = prec.max_iter_cr
     max_iter_dr = prec.max_iter_dr
-    converged = False
-    repeat_revir = False
 
     # Compute total enclosed mass including baryons, perturbers, etc.
     # May need to move into loop depending on how m is updated
@@ -156,62 +154,59 @@ def integrate_time_step(state, dt_prop, step_count):
     # m_tot = compute_mass(m)
     m_tot_orig = state.m_tot
 
-    while not converged:
-        ### Step 1: Energy transport ###
+    ### Step 1: Energy transport ###
 
-        p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, dt_prop, eps_du, c1)
-        # p_cond, du_max_new, dt_prop = np.asarray(state.p, dtype=np.float64), 1e-5, dt_prop # FOR DEBUGGING!
+    p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, dt_prop, eps_du, c1)
+    # p_cond, du_max_new, dt_prop = np.asarray(state.p, dtype=np.float64), 1e-5, dt_prop # FOR DEBUGGING!
 
-        ### Step 2: Reestablish hydrostatic equilibrium ###
-        while True:
-            if repeat_revir:
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_orig)
-            else:
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
+    ### Step 2: Reestablish hydrostatic equilibrium ###
 
-            # Shell crossing
-            if status == 'shell_crossing':
-                print("crossed:")
-                print(r_new[:,:10])
-                raise RuntimeError("stopping")
-                if iter_cr >= max_iter_cr:
-                    raise RuntimeError("Max iterations exceeded for shell crossing in conduction/revirialization step")
-                dt_prop *= 0.5
-                iter_cr += 1
-                repeat_revir = False
-                print(f"{step_count}: updated dt_prop to {dt_prop}")
-                print(f"dr_max_new: {dr_max_new}")
-                break # Exit inner loop, redo conduct_heat with original values and smaller dt
+    status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
 
-            # if step_count > 28:
-            #     print(step_count, repeat_revir, ":")
-            #     plot_r_markers(r_new[:,1:20])
-            # v2_new = p_new / rho_new
-            # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
-            # Check dr criterion
-            """
-            With new step to ensure equilibrium in initialization, no longer a need to accept larger dr in first time step.
-            If needed, can reintroduce with 'and (step_count != 1):' in the if statement below.
-            """
-            if dr_max_new > eps_dr:
-                # print(step_count, dr_max_new)
-                if iter_dr >= max_iter_dr:
-                    raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
-                iter_dr += 1
-                repeat_revir = True
-                continue # Go to top of inner loop, repeat revirialize with new values
+    while True:
 
-            # Both criteria are met, break out of inner and outer loop
-            converged = True
-            break
-                # If no shell crossing, realign
-        if step_count > -1:
-            print(step_count, iter_dr)
-            # plot_r_markers(r_new[:,1:10])
+        # Shell crossing
+        if status == 'shell_crossing':
+            print("crossed:")
+            print(r_new[:,:10])
+            raise RuntimeError("stopping")
+            if iter_cr >= max_iter_cr:
+                raise RuntimeError("Max iterations exceeded for shell crossing in conduction/revirialization step")
+            dt_prop *= 0.5
+            iter_cr += 1
+            repeat_revir = False
+            print(f"{step_count}: updated dt_prop to {dt_prop}")
+            print(f"dr_max_new: {dr_max_new}")
+            break # Exit inner loop, redo conduct_heat with original values and smaller dt
+
+        # if step_count > 28:
+        #     print(step_count, repeat_revir, ":")
+        #     plot_r_markers(r_new[:,1:20])
+
+        v2_new = p_new / rho_new
+        r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
+
+        # Check dr criterion
+        """
+        With new step to ensure equilibrium in initialization, no longer a need to accept larger dr in first time step.
+        If needed, can reintroduce with 'and (step_count != 1):' in the if statement below.
+        """
+        if dr_max_new > eps_dr:
+            # print(step_count, dr_max_new)
+            if iter_dr >= max_iter_dr:
+                raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
+            iter_dr += 1
+            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_real, rho_real, p_real, m_tot_real)
+            continue # Go to top of loop
+
+        # Both criteria are met, break out of loop
+        break
+
+    if step_count > -1:
+        print(step_count, iter_dr, dr_max_new)
+        # plot_r_markers(r_new[:,1:10])
     # v2_new = p_new / rho_new
     # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
-    v2_new = p_new / rho_new
-    r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
 
     ### Step 3: Update state variables ###
 
@@ -281,7 +276,7 @@ def plot_r_markers(r_slice):
             ax.text(rj, -0.05, str(j), ha="center", va="top",
                     transform=ax.get_xaxis_transform(), fontsize=8)
         ax.set_ylim(0, 1)
-        ax.set_xlim(3e-3, 5e2)
+        ax.set_xlim(3e-3, 1e-1)
         ax.set_yticks([])
         ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
 

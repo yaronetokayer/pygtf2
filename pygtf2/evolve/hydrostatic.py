@@ -110,7 +110,7 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
         xk = solve_tridiagonal_frank(a, b, c, y)
         x[k] = xk
     d = max_frac_diff_x(x)
-    alpha = 1.0 / (1 + d/d0)**z
+    alpha = 1.0 / (1 + (d/d0)**z)
     dr_max = float(np.max(np.abs(x)))
     # print(d, alpha, dr_max)
 
