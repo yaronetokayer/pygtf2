@@ -183,8 +183,8 @@ def integrate_time_step(state, dt_prop, step_count):
         #     print(step_count, repeat_revir, ":")
         #     plot_r_markers(r_new[:,1:20])
 
-        v2_new = p_new / rho_new
-        r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
+        # v2_new = p_new / rho_new
+        # r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
 
         # Check dr criterion
         """
@@ -196,7 +196,8 @@ def integrate_time_step(state, dt_prop, step_count):
             if iter_dr >= max_iter_dr:
                 raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
             iter_dr += 1
-            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_real, rho_real, p_real, m_tot_real)
+            # status, r_new, rho_new, p_new, dr_max_new = revirialize(r_real, rho_real, p_real, m_tot_real)
+            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_orig)
             continue # Go to top of loop
 
         # Both criteria are met, break out of loop
@@ -205,8 +206,8 @@ def integrate_time_step(state, dt_prop, step_count):
     if step_count > -1:
         print(step_count, iter_dr, dr_max_new)
         # plot_r_markers(r_new[:,1:10])
-    # v2_new = p_new / rho_new
-    # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
+    v2_new = p_new / rho_new
+    r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
 
     ### Step 3: Update state variables ###
 

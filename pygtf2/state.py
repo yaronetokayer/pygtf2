@@ -534,8 +534,8 @@ class State:
                     break
                 if i >= 100:
                     raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
-            if chatter:
-                print(f"j={j}: HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+            # if chatter:
+            #     print(f"j={j}: HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
 
             v2_new = p_new / rho_new
             # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
