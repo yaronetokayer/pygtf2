@@ -203,8 +203,8 @@ def integrate_time_step(state, dt_prop, step_count):
         # Both criteria are met, break out of loop
         break
 
-    if step_count > -1:
-        print(step_count, iter_dr, dr_max_new)
+    # if step_count > -1:
+    #     print(step_count, iter_dr, dr_max_new)
         # plot_r_markers(r_new[:,1:10])
     v2_new = p_new / rho_new
     r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)

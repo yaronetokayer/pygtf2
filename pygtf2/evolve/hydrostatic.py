@@ -106,7 +106,7 @@ def revirialize(r, rho, p, m_tot) -> tuple[str, np.ndarray | None, np.ndarray | 
     d0 = 1e-5
 
     for k in range(s):
-        a, b, c, y = build_tridiag_system(r[k], rho[k], p[k], m_tot)
+        a, b, c, y = build_tridiag_system_log(r[k], rho[k], p[k], m_tot)
         xk = solve_tridiagonal_frank(a, b, c, y)
         x[k] = xk
     d = max_frac_diff_x(x)
@@ -179,25 +179,38 @@ def _update_r_p_rho(r, x, p, rho) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
       (float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
 def build_tridiag_system(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Construct the tridiagonal matrix system (A·X = Y) used in the revirialization step.
+    Build the tridiagonal linear system A·x = y for the interior fractional radius shifts.
 
-    Arguments
-    ---------
-    r : ndarray
-        Radial grid points (length = n + 1)
-    rho : ndarray
-        Density at each radial grid point (length = n)
-    p : ndarray
-        Pressure at each radial grid point (length = n)
-    m_tot : ndarray
-        Total enclosed mass at each radial grid point, including baryons/perturbers (length = n + 1)
+    Parameters
+    ----------
+    r : ndarray, shape (N,)
+        Edge radii (N = number of edges = number of shells + 1).
+    rho : ndarray, shape (N-1,)
+        Shell-centered densities.
+    p : ndarray, shape (N-1,)
+        Shell-centered pressures.
+    m_tot : ndarray, shape (N,)
+        Total enclosed mass at the same edge radii as `r`.
 
     Returns
     -------
-    ab : ndarray
-        Banded matrix (3, n-1) for use with solve_banded
-    y : ndarray
-        Right-hand side of the linear system (length = n-1)
+    a : ndarray, shape (N-2,)
+        Subdiagonal coefficients (multiply x_{j-1}) for interior nodes j=1..N-2.
+    b : ndarray, shape (N-2,)
+        Main diagonal coefficients (multiply x_j) for interior nodes.
+    c : ndarray, shape (N-2,)
+        Superdiagonal coefficients (multiply x_{j+1}) for interior nodes.
+    y : ndarray, shape (N-2,)
+        Right-hand side vector for the interior nodes.
+
+    Notes
+    -----
+    - The unknown vector x contains the interior fractional displacements x_j = Δr_j / r_j
+      (excluding the fixed inner and outer edges), so the returned arrays all have length M-2.
+    - The routine linearizes the hydrostatic update using finite differences and geometric
+      volume factors. Small numerical floors are applied to pressure differences and density sums
+      to prevent divide-by-zero or overflow. The outputs are arranged for direct use with the
+      tridiagonal solver used elsewhere in this module.
     """
     rL = r[:-2]         # Left radial grid points
     rR = r[2:]          # Right radial grid points
@@ -238,6 +251,108 @@ def build_tridiag_system(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.n
     a = r3d * c2 - q2                               # Subdiagonal
     b = -2.0 - r3b * c1 - r3c * c2                  # Main diagonal, except first element
     c = r3a * c1 + q1                               # Superdiagonal
+
+    # Enforce dp/dr = 0 for i=1
+    den1 = rR3[0] - rC3[0]   # Δ(r^3)_1
+    den0 = rC3[0] - rL3[0]   # Δ(r^3)_0
+
+    a[0] = 0.0
+    b[0] = 5.0 * rC3[0] * ( p[1] / den1 + p[0] / den0 )
+    c[0] = -5.0 * p[1] * (rR3[0] / den1)   # note: rC3[1] == rR3[0]
+    y[0] = -(p[1] - p[0])
+
+    return a, b, c, y
+
+@njit(types.Tuple((float64[:], float64[:], float64[:], float64[:]))
+      (float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=False)
+def build_tridiag_system_log(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Construct the tridiagonal system A·x = y for interior radial corrections.
+    These are the coefficients for the log form of the HE equation.
+
+    Arguments
+    ---------
+    r : ndarray
+        Radial edge coordinates, length = n + 1.
+    rho : ndarray
+        Shell-centered densities, length = n.
+    p : ndarray
+        Shell-centered pressures, length = n.
+    m_tot : ndarray
+        Total enclosed mass at edge points, length = n + 1.
+
+    Returns
+    -------
+    a, b, c, y : ndarray
+        Tuple of 1D arrays (each length = n-1) defining the tridiagonal system
+        for the interior unknowns:
+          - a: subdiagonal (A[i, i-1])
+          - b: main diagonal (A[i, i])
+          - c: superdiagonal (A[i, i+1])
+          - y: right-hand side vector
+    """
+    # Geometric volume factors
+    rL = r[:-2]         # Left radial grid points
+    rR = r[2:]          # Right radial grid points
+    rC = r[1:-1]        # Central radial grid points
+    
+    rC2 = rC**2
+    rC3 = rC2 * rC
+    rR3 = rR**3
+    rL3 = rL**3
+
+    rL3rL3 = rL3 / (rC3 - rL3)
+    rR3rC3 = rR3 / (rR3 - rC3)
+    rC3rC3 = rC3 / (rR3 - rC3)
+    rC3rL3 = rC3 / (rC3 - rL3)
+    rC2rC3 = rC2 / (rR3 - rC3)
+    rC2rL3 = rC2 / (rC3 - rL3)
+    
+    lnr = np.empty_like(r)
+    lnr[1:] = np.log(r[1:])             # Don't take ln0 - lnr[0] never used anyway
+    lnr[0]  = lnr[1]                    # Arbitrary finite placeholder
+    dlnr = 0.5 * ( lnr[2:] - lnr[:-2] ) # Central difference
+
+    pL = p[:-1]
+    pR = p[1:]
+    rhoL = rho[:-1]
+    rhoR = rho[1:]
+    lnp = np.log(p)
+    dlnp = lnp[1:] - lnp[:-1]           # Right-sided difference
+
+    sr = rho[:-1] + rho[1:]
+    sp = p[:-1] + p[1:]
+
+    mr = m_tot[1:-1] / r[1:-1]
+
+    # floors to avoid divide-by-zero/inf
+    tiny = np.finfo(np.float64).tiny
+    sp   = np.where(np.abs(sp)   < tiny, np.copysign(tiny, sp),   sp)
+    dlnr   = np.where(np.abs(dlnr)   < tiny, np.copysign(tiny, dlnr),   dlnr)
+
+    dpdr = 0.5 * dlnp / dlnr**2
+    srsp = sr / sp
+
+    # Terms in final expressions
+    afac = 5.0 / dlnr + (mr / sp) * (5.0 * pL * srsp - 3.0 * rhoL)
+    bfac1 = 5.0 / dlnr
+    bfac2 = m_tot[1:-1] / sp
+    bfac3 = 5.0 * pR  * srsp - 3.0 * rhoR
+    bfac4 = 3.0 * rhoL - 5.0 * pL * srsp
+    cfac = 5.0 / dlnr + (mr / sp) * (3.0 * rhoR - 5.0 * pR * srsp)
+    dfac = 2.0 * dpdr * dlnr
+
+    y = -mr * srsp - dfac
+
+    a = dpdr - rL3rL3 * afac                                                                # Subdiagonal
+    b = bfac1 * (rC3rC3 + rC3rL3) - mr * srsp - bfac2 * (rC2rC3 * bfac3 + rC2rL3 * bfac4)   # Main diagonal
+    c = -dpdr - rR3rC3 * cfac                                                               # Superdiagonal
+
+    # Enforce dp/dr = 0 for i=1
+    a[0] = 0.0
+    b[0] = 5.0 * ( rC3rC3[0] + rC3rL3[0] )
+    c[0] = -5.0 * rR3rC3[0]
+    y[0] = -dlnp[0]
 
     return a, b, c, y
 
