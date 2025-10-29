@@ -37,6 +37,9 @@ def run_until_stop(state, start_step, **kwargs):
         # Integrate time step
         integrate_time_step(state, dt_prop, step_count)
 
+        if step_count % 1000 == 0:
+            print(f"Completed step {step_count}", end='\r', flush=True)
+
         rho0 = state.rho_tot[0]
 
         # Check halting criteria
@@ -123,7 +126,7 @@ def integrate_time_step(state, dt_prop, step_count):
         Step count
     """
     from pygtf2.evolve.transport import compute_luminosities, conduct_heat
-    from pygtf2.evolve.hydrostatic import revirialize, compute_mass
+    from pygtf2.evolve.hydrostatic import revirialize_drift_damp, compute_mass
     from pygtf2.evolve.realign import realign, realign_extensive
 
     # Store state attributes for fast access in loop and to pass into njit functions
@@ -161,9 +164,18 @@ def integrate_time_step(state, dt_prop, step_count):
 
     ### Step 2: Reestablish hydrostatic equilibrium ###
 
-    status, r_new, rho_new, p_new, dr_max_new = revirialize(r_orig, rho_orig, p_cond, m_tot_orig)
+    status, r_new, rho_new, p_new, dr_max_new = revirialize_drift_damp(r_orig, rho_orig, p_cond, m_tot_orig)
 
     while True:
+        if not np.all(r_new == r_new[0]):
+            diff = r_new[1] - r_new[0]
+            nonzero_mask = diff != 0
+            n_nonzero = int(np.count_nonzero(nonzero_mask))
+            if n_nonzero:
+                max_abs = float(np.max(np.abs(diff[nonzero_mask])))
+            else:
+                max_abs = 0.0
+            print(f"{step_count}: Nonzero positions: {n_nonzero}, max abs among them: {max_abs:.6g}")
 
         # Shell crossing
         if status == 'shell_crossing':
@@ -183,8 +195,8 @@ def integrate_time_step(state, dt_prop, step_count):
         #     print(step_count, repeat_revir, ":")
         #     plot_r_markers(r_new[:,1:20])
 
-        # v2_new = p_new / rho_new
-        # r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
+        v2_new = p_new / rho_new
+        r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
 
         # Check dr criterion
         """
@@ -194,10 +206,11 @@ def integrate_time_step(state, dt_prop, step_count):
         if dr_max_new > eps_dr:
             # print(step_count, dr_max_new)
             if iter_dr >= max_iter_dr:
+                print(step_count, dr_max_new)
                 raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
             iter_dr += 1
-            # status, r_new, rho_new, p_new, dr_max_new = revirialize(r_real, rho_real, p_real, m_tot_real)
-            status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_orig)
+            status, r_new, rho_new, p_new, dr_max_new = revirialize_drift_damp(r_real, rho_real, p_real, m_tot_real)
+            # status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_orig)
             continue # Go to top of loop
 
         # Both criteria are met, break out of loop
@@ -206,8 +219,8 @@ def integrate_time_step(state, dt_prop, step_count):
     # if step_count > -1:
     #     print(step_count, iter_dr, dr_max_new)
         # plot_r_markers(r_new[:,1:10])
-    v2_new = p_new / rho_new
-    r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
+    # v2_new = p_new / rho_new
+    # r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
 
     ### Step 3: Update state variables ###
 

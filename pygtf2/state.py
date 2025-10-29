@@ -441,8 +441,9 @@ class State:
         r_mid = 0.5 * (r[:, 1:] + r[:, :-1])          # Midpoint of each shell
         dr3 = r[:, 1:]**3 - r[:, :-1]**3              # Volume difference per shell
 
-        m = np.zeros_like(r, dtype=np.float64)
-        v2 = np.zeros_like(r_mid, dtype=np.float64)
+        m   = np.zeros_like(r, dtype=np.float64)
+        v2  = np.zeros_like(r_mid, dtype=np.float64)
+        rho = np.zeros_like(r_mid, dtype=np.float64)
 
         # Compute m and v2 for all radial bins
         for i, name in enumerate(labels):
@@ -507,7 +508,7 @@ class State:
         Fine-tunes initial profile to ensure hydrostatic equilibrium.
         Iteratively runs revirialize() until max |dr/r| < eps_dr.
         """
-        from pygtf2.evolve.hydrostatic import revirialize
+        from pygtf2.evolve.hydrostatic import revirialize_res_damp
         from pygtf2.evolve.realign import realign, realign_extensive
         chatter = self.config.io.chatter
 
@@ -521,31 +522,64 @@ class State:
 
         eps_dr = float(self.config.prec.eps_dr)
 
-        j = 0
+        realign_after = False
+
+        if realign_after:
+            j = 0             # FOR REALIGN AFTER
         while True:
-            j += 1
+            if realign_after:
+                j += 1        # FOR REALIGN AFTER
             i = 0
             while True:
                 i += 1
-                status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_new)
-                # v2_new = p_new / rho_new
+                status, r_new, rho_new, p_new, dr_max_new = revirialize_res_damp(r_new, rho_new, p_new, m_tot_new, self.frac)
+                if status == 'shell_crossing':
+                    raise RuntimeError("Shell crossing!")
+                if np.all(r_new == r_new[0]):
+                    print('all the same')
+                else:
+                    # print('different!')
+                    diff = r_new[1] - r_new[0]
+                    nonzero_mask = diff != 0
+                    indices = np.nonzero(nonzero_mask)[0]
+                    n_nonzero = int(indices.size)
+                    if n_nonzero:
+                        max_abs = float(np.max(np.abs(diff[indices])))
+                        idx_list = indices.tolist()
+                    else:
+                        max_abs = 0.0
+                        idx_list = []
+                    print(f"{i}: Nonzero positions: {n_nonzero}, max abs among them: {max_abs:.6g}")#, indices: {idx_list}")
+                # if i >= 98:
+                    # print(r_new[:,:10])
+                    # plot_r_markers(r_new[:,:10])
+                if not realign_after:
+                    v2_new = p_new / rho_new                                                                                # FOR PERSISTENT REALIGN
+                    r_new, rho_new, u_new, v2_new, p_new, m_new, m_tot_new = realign_extensive(r_new, rho_new, v2_new)      # FOR PERSISTENT REALIGN
                 # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
-                if dr_max_new < eps_dr:
-                    break
+                # if dr_max_new < eps_dr:
+                #     break
                 if i >= 100:
                     raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
-            # if chatter:
-            #     print(f"j={j}: HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+            if chatter:
+                if realign_after:
+                    print(f"j={j}: HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")           # FOR REALIGN AFTER
+                else:
+                    print(f"HE achieved in {i} revir+realign iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")      # FOR PERSISTENT REALIGN
 
-            v2_new = p_new / rho_new
-            # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
-            r_new, rho_new, u_new, v2_new, p_new, m_new, m_tot_new = realign_extensive(r_new, rho_new, v2_new)
+            if realign_after:
+                v2_new = p_new / rho_new                                                                                  # FOR REALIGN AFTER
+                r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)                         # FOR REALIGN AFTER
+                r_new, rho_new, u_new, v2_new, p_new, m_new, m_tot_new = realign_extensive(r_new, rho_new, v2_new)        # FOR REALIGN AFTER
 
-            if i == 1:
-                break
+                if i == 1:                                                                                                # FOR REALIGN AFTER
+                    break                                                                                                 # FOR REALIGN AFTER
+            else:
+                break                                                                                                       # FOR PERSISTENT REALIGN
 
-        if chatter:
-            print(f"Hydrostatic equilibrium achieved after {j} realignments. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+        if realign_after:
+            if chatter:                                                                                                           # FOR REALIGN AFTER
+                print(f"Hydrostatic equilibrium achieved after {j} realignments. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")    # FOR REALIGN AFTER
 
         self.r = r_new
         self.rho = rho_new
@@ -574,7 +608,7 @@ class State:
 
         self.r = self._setup_grid()
         self._initialize_grid()
-        self._ensure_virial_equilibrium()
+        # self._ensure_virial_equilibrium()
 
         self.t = 0.0                        # Current time in simulation units
         self.step_count = 0                 # Global integration step counter (never reset)
@@ -723,3 +757,31 @@ class State:
         filtered = {k: v for k, v in self.__dict__.items() if k != "config"}
         return f"{self.__class__.__name__}(\n{pprint.pformat(filtered, indent=2)}\n)"
 
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_r_markers(r_slice):
+    """
+    r_slice : array of shape (s, m)
+        Radii for each species (s species, m points each).
+    """
+    s, m = r_slice.shape
+    fig, axes = plt.subplots(s, 1, figsize=(10, 0.75*s), sharex=True)
+
+    if s == 1:
+        axes = [axes]
+
+    for k, ax in enumerate(axes):
+        ax.set_xscale("log")
+        for j, rj in enumerate(r_slice[k]):
+            ax.axvline(rj, color="k", lw=1)
+            ax.text(rj, -0.05, str(j), ha="center", va="top",
+                    transform=ax.get_xaxis_transform(), fontsize=8)
+        ax.set_ylim(0, 1)
+        ax.set_xlim(3e-3, 1e-1)
+        ax.set_yticks([])
+        ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
+
+    axes[-1].set_xlabel("r (log scale)")
+    plt.tight_layout()
+    plt.show()

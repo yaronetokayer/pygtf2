@@ -113,20 +113,21 @@ def conduct_heat(m, u, rho, lum, lnL, mrat, dt_prop, eps_du, c1) -> tuple[np.nda
     # dudt_hex[n, i] = c1 * sum_{j != n} lnL[n, j] * rho[j, i] *
     #                  (mrat[j]*u[j, i] - mrat[n]*u[n, i]) / (u[j, i] + u[n, i])^(3/2)
     dudt_hex = np.zeros_like(u)
-    for n in range(s):
-        for j in range(s):
-            if j == n:
-                continue
-            lnL_nj = lnL[n, j]
-            mrj    = mrat[j]
-            mrn    = mrat[n]
-            for i in range(N):
-                uj = u[j, i]
-                un = u[n, i]
-                denom = (uj + un)**1.5
-                term = lnL_nj * rho[j, i] * (mrj * uj - mrn * un) / denom
-                dudt_hex[n, i] += term
-    dudt_hex *= c1
+    # for n in range(s):
+    #     for j in range(s):
+    #         if j == n:
+    #             continue
+    #         lnL_nj = lnL[n, j]
+    #         mrj    = mrat[j]
+    #         mrn    = mrat[n]
+    #         for i in range(N):
+    #             uj = u[j, i]
+    #             un = u[n, i]
+    #             denom = (uj + un)**1.5
+    #             term = lnL_nj * rho[j, i] * (mrj * uj - mrn * un) / denom
+    #             dudt_hex[n, i] += term
+    # dudt_hex *= c1
+    # print(dudt_hex)
 
     # ---------- combine, adapt dt if needed ----------
     dudt = dudt_cond + dudt_hex
