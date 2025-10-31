@@ -8,6 +8,7 @@ def revirialize_interp(r, rho, p, m) -> tuple[str, np.ndarray | None, np.ndarray
     Solves for radius adjustments and updates physical quantities for all species.
     Assumes all species have aligned radial bins.
     Interpolates the mass enclosed for the radial bins of each species.
+    Updates to per-species r arrays are fed back into next species revir - this is found to be necessary.
 
     Parameters
     ----------
@@ -42,8 +43,8 @@ def revirialize_interp(r, rho, p, m) -> tuple[str, np.ndarray | None, np.ndarray
     'shell_crossing' and None for all outputs except status.
     """
     s, _ = r.shape
-    r_copy = r.copy() ## FOR DEBUGGING
-    r_new   = np.empty_like(r)
+    r_copy = r.copy()
+    # r_new   = np.empty_like(r)
     rho_new = np.empty_like(rho)
     p_new   = np.empty_like(p)
     dr_max = 0.0
@@ -54,17 +55,17 @@ def revirialize_interp(r, rho, p, m) -> tuple[str, np.ndarray | None, np.ndarray
         xk = solve_tridiagonal_thomas(a, b, c, y)
         dr_max = max(dr_max, float(np.max(np.abs(xk))))
         rk, pk, rhok = _update_r_p_rho(r[k], xk, p[k], rho[k])
-        r_copy[k]  = rk ## FOR DEBUGGING
-        r_new[k]   = rk
+        r_copy[k]  = rk
+        # r_new[k]   = rk
         p_new[k]   = pk
         rho_new[k] = rhok
 
-    if np.any((r_new[:,1:] - r_new[:,:-1]) <= 0.0):
-        return 'shell_crossing', r_new, None, None, dr_max, None
+    if np.any((r_copy[:,1:] - r_copy[:,:-1]) <= 0.0):
+        return 'shell_crossing', r_copy, None, None, dr_max, None
 
-    he_res = compute_he_resid_norm(r_new, rho_new, p_new, m)
+    he_res = compute_he_resid_norm(r_copy, rho_new, p_new, m)
 
-    return 'ok', r_new, rho_new, p_new, dr_max, he_res
+    return 'ok', r_copy, rho_new, p_new, dr_max, he_res
 
 @njit(float64[:](float64[:]), cache=True, fastmath=True)
 def compute_mass(m) -> np.ndarray:

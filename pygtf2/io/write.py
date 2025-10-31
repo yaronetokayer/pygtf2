@@ -1,5 +1,6 @@
 import numpy as np
 import os
+from pygtf2.util.calc import mass_fraction_radii
 
 def make_dir(state):
     """
@@ -95,8 +96,11 @@ def write_log_entry(state, start_step):
     start_step : int
         The starting value of the current simulation run
     """
-    io = state.config.io
-    prec = state.config.prec
+    config = state.config
+    io = config.io
+    prec = config.prec
+    s = config.s
+    spec_names = config.spec.keys()
     filepath = os.path.join(io.base_dir, io.model_dir, f"logfile.txt")
     chatter = io.chatter
     step = state.step_count
@@ -104,11 +108,82 @@ def write_log_entry(state, start_step):
     if ( step - start_step ) % nlog != 0:
         nlog = ( step - start_step ) % nlog
 
-    header = f"{'step':>10}  {'time':>12}  {'<dt>':>12}  {'rho_c':>12}  {'v_max':>12}  {'<dt lim>':>8}  {'<dr lim>':>8}  {'<du lim>':>8}  {'<n_iter_cr>':>11}  {'<n_iter_dr>':>11}\n"
-    new_line = f"{step:10d}  {state.t:12.6e}  {state.dt_cum / nlog:12.6e}  {state.rho_c:12.6e}  {state.maxvel:12.6e}  {state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}  {state.dr_max_cum / prec.eps_dr / nlog:8.2e}  {state.du_max_cum / prec.eps_du / nlog:8.2e}  {state.n_iter_cr / nlog:11.5e}  {state.n_iter_dr / nlog:11.5e}\n"
+    r_50 = np.zeros(s)
+    for k in range(s):
+        r_50[k] = np.asarray(
+            mass_fraction_radii(state.r[k], state.m[k], np.array([0.5])),
+            dtype=np.float64,
+        )[0]
 
+    # Build header (base columns up to <du lim>)
+    header_cols = [
+        f"{'step':>10}",
+        f"{'time':>12}",
+        f"{'<dt>':>12}",
+        f"{'rho_c':>12}",
+        f"{'v_max':>12}",
+        f"{'<dt lim>':>8}",
+        f"{'<dr lim>':>8}",
+        f"{'<du lim>':>8}",
+    ]
+
+    # Add per-species r_50 columns (use spec_names order)
+    spec_list = list(spec_names)
+    for name in spec_list:
+        header_cols.append(f"{'r50['+name+']':>11}")
+
+    # Now add the n_iter columns after the r50 cols
+    header_cols.extend([
+        f"{'<n_iter_cr>':>11}",
+        f"{'<n_iter_dr>':>11}",
+    ])
+
+    header = "  ".join(header_cols) + "\n"
+
+    # Build data row
     if step == start_step:
-        new_line = new_line[:26] + f"         N/A" +  new_line[38:66] + f"       N/A       N/A       N/A          N/A          N/A\n"
+        # On the first step, some averaged/limiting quantities are N/A.
+        row = [
+            f"{step:10d}",
+            f"{state.t:12.6e}",
+            f"{'N/A':>12}",                 # <dt>
+            f"{state.rho_c:12.6e}",
+            f"{state.maxvel:12.6e}",
+            f"{'N/A':>8}",                  # <dt lim>
+            f"{'N/A':>8}",                  # <dr lim>
+            f"{'N/A':>8}",                  # <du lim>
+        ]
+
+        # Append per-species r_50 values
+        for k in range(s):
+            row.append(f"{r_50[k]:11.4e}")
+
+        # Append N/A for iter counts
+        row.append(f"{'N/A':>11}")
+        row.append(f"{'N/A':>11}")
+
+    else:
+        # Normal numeric row
+        row = [
+            f"{step:10d}",
+            f"{state.t:12.6e}",
+            f"{state.dt_cum / nlog:12.6e}",
+            f"{state.rho_c:12.6e}",
+            f"{state.maxvel:12.6e}",
+            f"{state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}",
+            f"{state.dr_max_cum / prec.eps_dr / nlog:8.2e}",
+            f"{state.du_max_cum / prec.eps_du / nlog:8.2e}",
+        ]
+
+        # Append per-species r_50 values
+        for k in range(s):
+            row.append(f"{r_50[k]: 11.4e}")
+
+        # Append iter counts after r50 columns
+        row.append(f"{state.n_iter_cr / nlog:11.5e}")
+        row.append(f"{state.n_iter_dr / nlog:11.5e}")
+
+    new_line = "  ".join(row) + "\n"
 
     _update_file(filepath, header, new_line, step)
 
@@ -371,24 +446,3 @@ def _update_file(filepath, header, new_line, index):
 
     with open(filepath, "w") as f:
         f.writelines(lines)
-
-def mass_fraction_radii(r_edges, m_edges, fracs):
-    # m_edges should be enclosed mass at edges, with m_edges[-1] = species total
-    m_tot = m_edges[-1]
-    if m_tot <= 0:
-        return np.full(fracs.size, np.nan)
-    target = fracs * m_tot
-    out = np.empty(fracs.size)
-    # linear-in-radius search & interpolation on edges
-    j = 0
-    for i, mt in enumerate(target):
-        while j+1 < m_edges.size and m_edges[j+1] < mt:
-            j += 1
-        if j+1 == m_edges.size:
-            out[i] = r_edges[-1]
-        else:
-            m0, m1 = m_edges[j], m_edges[j+1]
-            r0, r1 = r_edges[j], r_edges[j+1]
-            t = 0.0 if m1 == m0 else (mt - m0) / (m1 - m0)
-            out[i] = r0 + t * (r1 - r0)
-    return out
