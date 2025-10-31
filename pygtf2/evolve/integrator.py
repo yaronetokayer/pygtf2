@@ -1,11 +1,13 @@
 import numpy as np
+from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
+from pygtf2.evolve.transport import compute_luminosities, conduct_heat
+from pygtf2.evolve.hydrostatic import revirialize_interp, compute_mass
+from pygtf2.util.calc import calc_rho_c
 
 def run_until_stop(state, start_step, **kwargs):
     """
     Repeatedly step forward until t >= t_halt or halting criterion met.
     """
-    from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
-
     # User halting criteria
     steps = kwargs.get('steps', None)
     time_limit = kwargs.get('stoptime', None)
@@ -18,8 +20,8 @@ def run_until_stop(state, start_step, **kwargs):
     sim = state.config.sim
     chatter = bool(io.chatter)
     t_halt = float(sim.t_halt)
-    rho0_last_prof = float(state.rho_tot[0])
-    rho0_last_tevol = float(state.rho_tot[0])
+    rho0_last_prof = float(state.rho_c)
+    rho0_last_tevol = float(state.rho_c)
     rho_c_halt = float(sim.rho_c_halt)
     drho_prof = float(io.drho_prof)
     drho_tevol = float(io.drho_tevol)
@@ -40,7 +42,7 @@ def run_until_stop(state, start_step, **kwargs):
         if step_count % 1000 == 0:
             print(f"Completed step {step_count}", end='\r', flush=True)
 
-        rho0 = state.rho_tot[0]
+        rho0 = state.rho_c
 
         # Check halting criteria
         if rho0 > rho_c_halt:
@@ -125,10 +127,6 @@ def integrate_time_step(state, dt_prop, step_count):
     step_count : int
         Step count
     """
-    from pygtf2.evolve.transport import compute_luminosities, conduct_heat
-    from pygtf2.evolve.hydrostatic import revirialize_drift_damp, compute_mass
-    from pygtf2.evolve.realign import realign, realign_extensive
-
     # Store state attributes for fast access in loop and to pass into njit functions
     prec = state.config.prec
     char  = state.char
@@ -145,7 +143,6 @@ def integrate_time_step(state, dt_prop, step_count):
     # Compute current luminosity array
     lum = compute_luminosities(c2, r_orig, u_orig, rho_orig, mrat, lnL)
 
-    iter_cr = iter_dr = 0
     eps_du = float(prec.eps_du)
     eps_dr = float(prec.eps_dr)
     max_iter_cr = prec.max_iter_cr
@@ -155,145 +152,70 @@ def integrate_time_step(state, dt_prop, step_count):
     # May need to move into loop depending on how m is updated
     # Current version just returns m as is
     # m_tot = compute_mass(m)
-    m_tot_orig = state.m_tot
 
-    ### Step 1: Energy transport ###
-
-    p_cond, du_max_new, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, dt_prop, eps_du, c1)
-    # p_cond, du_max_new, dt_prop = np.asarray(state.p, dtype=np.float64), 1e-5, dt_prop # FOR DEBUGGING!
-
-    ### Step 2: Reestablish hydrostatic equilibrium ###
-
-    status, r_new, rho_new, p_new, dr_max_new = revirialize_drift_damp(r_orig, rho_orig, p_cond, m_tot_orig)
-
+    iter_cr = 0
     while True:
-        if not np.all(r_new == r_new[0]):
-            diff = r_new[1] - r_new[0]
-            nonzero_mask = diff != 0
-            n_nonzero = int(np.count_nonzero(nonzero_mask))
-            if n_nonzero:
-                max_abs = float(np.max(np.abs(diff[nonzero_mask])))
-            else:
-                max_abs = 0.0
-            print(f"{step_count}: Nonzero positions: {n_nonzero}, max abs among them: {max_abs:.6g}")
 
-        # Shell crossing
-        if status == 'shell_crossing':
-            print("crossed:")
-            print(r_new[:,:10])
-            raise RuntimeError("stopping")
-            if iter_cr >= max_iter_cr:
-                raise RuntimeError("Max iterations exceeded for shell crossing in conduction/revirialization step")
-            dt_prop *= 0.5
-            iter_cr += 1
-            repeat_revir = False
-            print(f"{step_count}: updated dt_prop to {dt_prop}")
-            print(f"dr_max_new: {dr_max_new}")
-            break # Exit inner loop, redo conduct_heat with original values and smaller dt
+        ### Step 1: Energy transport ###
+        p_cond, du_max, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, r_orig, dt_prop, eps_du, c1)
 
-        # if step_count > 28:
-        #     print(step_count, repeat_revir, ":")
-        #     plot_r_markers(r_new[:,1:20])
+        ### Step 2: Reestablish hydrostatic equilibrium ###
+        status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m)
+        
+        iter_dr = 0
+        while True:
+            # Shell crossing
+            if status == 'shell_crossing':
+                if iter_cr >= max_iter_cr:
+                    raise RuntimeError("Max iterations exceeded for shell crossing in conduction/revirialization step")
+                dt_prop *= 0.5
+                iter_cr += 1
+                break # Redo conduct_heat with original values and smaller dt
 
-        v2_new = p_new / rho_new
-        r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
+            # Check dr criterion
+            """
+            With new step to ensure equilibrium in initialization, no longer a need to accept larger dr in first time step.
+            If needed, can reintroduce with 'and (step_count != 1):' in the if statement below.
+            """
+            if dr_max > eps_dr:
+                if iter_dr >= max_iter_dr:
+                    print(f"step {step_count}")
+                    raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
+                iter_dr += 1
+                status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_new, rho_new, p_new, m)
+                continue # Check for shell crossing
 
-        # Check dr criterion
-        """
-        With new step to ensure equilibrium in initialization, no longer a need to accept larger dr in first time step.
-        If needed, can reintroduce with 'and (step_count != 1):' in the if statement below.
-        """
-        if dr_max_new > eps_dr:
-            # print(step_count, dr_max_new)
-            if iter_dr >= max_iter_dr:
-                print(step_count, dr_max_new)
-                raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
-            iter_dr += 1
-            status, r_new, rho_new, p_new, dr_max_new = revirialize_drift_damp(r_real, rho_real, p_real, m_tot_real)
-            # status, r_new, rho_new, p_new, dr_max_new = revirialize(r_new, rho_new, p_new, m_tot_orig)
-            continue # Go to top of loop
-
-        # Both criteria are met, break out of loop
+            # Both criteria are met, break out of loop
+            break
         break
-
-    # if step_count > -1:
-    #     print(step_count, iter_dr, dr_max_new)
-        # plot_r_markers(r_new[:,1:10])
-    # v2_new = p_new / rho_new
-    # r_real, rho_real, u_real, v2_real, p_real, m_real, m_tot_real = realign_extensive(r_new, rho_new, v2_new)
 
     ### Step 3: Update state variables ###
 
-    state.r = r_real
-    state.rho = rho_real
-    state.p = p_real
-    state.v2 = v2_real
-    state.m = m_real
-    # state.r = r_new
-    # state.rho = rho_new
-    # state.p = p_new
-    # state.v2 = v2_new
-    # state.m = m_new
-    state.dr_max = dr_max_new
-    state.du_max = du_max_new
+    state.r = r_new
+    state.rho = rho_new
+    state.p = p_new
+    v2_new = p_new / rho_new
+    state.v2 = v2_new
+    state.dr_max = dr_max
+    state.du_max = du_max
 
-    state.rmid = 0.5 * (r_real[:, 1:] + r_real[:, :-1])
-    state.u = u_real
-    sqrt_v2_real = np.sqrt(v2_real)
-    state.trelax = 1.0 / (sqrt_v2_real * rho_real)
-    # state.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-    # state.u = 1.5 * v2_new
-    # sqrt_v2_new = np.sqrt(v2_new)
-    # state.trelax = 1.0 / (sqrt_v2_new * rho_new)
+    rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
+    state.rmid = rmid
+    state.u = 1.5 * v2_new
+    sqrt_v2_new = np.sqrt(v2_new)
+    state.trelax = 1.0 / (sqrt_v2_new * rho_new)
 
-    state.maxvel    = float(np.max(sqrt_v2_real))
-    # state.maxvel    = float(np.max(sqrt_v2_new))
+    state.maxvel    = float(np.max(sqrt_v2_new))
     state.mintrelax = float(np.min(state.trelax))
-
-    state.m_tot     = m_tot_real
-    # state.m_tot     = m_tot_new
-    state.rho_tot   = rho_new.sum(axis=0)
-    state.p_tot     = p_new.sum(axis=0)
-    state.v2_tot    = state.p_tot / state.rho_tot
-    state.u_tot     = 1.5 * state.v2_tot
+    state.rho_c = calc_rho_c(rmid, rho_new)
 
     # Diagnostics
     state.n_iter_cr += iter_cr
     state.n_iter_dr += iter_dr
     state.dt_cum += float(dt_prop)
-    if step_count != 1:
-        state.dr_max_cum += float(dr_max_new)
-    state.du_max_cum += float(du_max_new)
+    state.dr_max_cum += float(dr_max)
+    state.du_max_cum += float(du_max)
     state.dt_over_trelax_cum += float(dt_prop / state.mintrelax)
 
     state.dt = float(dt_prop)
     state.t += float(dt_prop)
-
-import matplotlib.pyplot as plt
-import numpy as np
-
-def plot_r_markers(r_slice):
-    """
-    r_slice : array of shape (s, m)
-        Radii for each species (s species, m points each).
-    """
-    s, m = r_slice.shape
-    fig, axes = plt.subplots(s, 1, figsize=(10, 0.75*s), sharex=True)
-
-    if s == 1:
-        axes = [axes]
-
-    for k, ax in enumerate(axes):
-        ax.set_xscale("log")
-        for j, rj in enumerate(r_slice[k]):
-            ax.axvline(rj, color="k", lw=1)
-            ax.text(rj, -0.05, str(j), ha="center", va="top",
-                    transform=ax.get_xaxis_transform(), fontsize=8)
-        ax.set_ylim(0, 1)
-        ax.set_xlim(3e-3, 1e-1)
-        ax.set_yticks([])
-        ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
-
-    axes[-1].set_xlabel("r (log scale)")
-    plt.tight_layout()
-    plt.show()

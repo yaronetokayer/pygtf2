@@ -41,8 +41,8 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
     base_styles = ['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))]
     style_map = {name: base_styles[i % len(base_styles)] for i, name in enumerate(species_names)}
 
-    # Which x to use
-    xkey = 'log_r' if profile == 'm' else 'log_rmid'
+    # Totals use the global x keys
+    xkey_tot = 'log_r' if profile == 'm' else 'log_rmid'
 
     # Prepare global axis limits (log scale → ignore nonpositive)
     posmin = np.inf
@@ -52,27 +52,36 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
 
     # Pass 1: compute limits across all plotted series
     for data in data_list:
-        x = data[xkey]
+        x_tot = data[xkey_tot]
+        xmin = min(xmin, 10.0**np.min(x_tot))
+        xmax = max(xmax, 10.0**np.max(x_tot))
+        
         if profile in {'rho', 'm', 'v2', 'p'}:
             y_tot = data[profile + '_tot'] if profile != 'm' else data['m_tot']
-            y_all = [y_tot]
+            y_candidates = [y_tot]
         else:  # 'trelax' has no total
-            y_all = []
+            y_candidates = []
 
         for sp in species_names:
             y_sp = data['species'][sp][profile]
-            y_all.append(y_sp)
+            y_candidates.append(y_sp)
 
-        # update limits
-        # x (edges for m, mid otherwise)
-        xmin = min(xmin, 10.0**np.min(x))
-        xmax = max(xmax, 10.0**np.max(x))
-        # y (only positive for log)
-        for y in y_all:
+        for y in y_candidates:
             y_pos = y[y > 0]
             if y_pos.size:
-                posmin = min(posmin, np.min(y_pos))
-                posmax = max(posmax, np.max(y_pos))
+                posmin = min(posmin, float(np.min(y_pos)))
+                posmax = max(posmax, float(np.max(y_pos)))
+
+        # # update limits
+        # # x (edges for m, mid otherwise)
+        # xmin = min(xmin, 10.0**np.min(x))
+        # xmax = max(xmax, 10.0**np.max(x))
+        # # y (only positive for log)
+        # for y in y_all:
+        #     y_pos = y[y > 0]
+        #     if y_pos.size:
+        #         posmin = min(posmin, np.min(y_pos))
+        #         posmax = max(posmax, np.max(y_pos))
 
     # Safeguard limits
     if not np.isfinite(posmin) or posmin <= 0:
@@ -83,22 +92,27 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
     # Pass 2: plot
     for ind, data in enumerate(data_list):
         color = cmap(ind % 10)
-        x = data[xkey]
-        X = 10.0**x
         time_lbl = f"t={data['time']:.2e}"
 
         # totals (solid), if applicable
+        x_tot = data[xkey_tot]
+        X_tot = 10.0**x_tot
         if profile in {'rho', 'm', 'v2', 'p'}:
             y_tot = data[profile + '_tot'] if profile != 'm' else data['m_tot']
-            ax.plot(X, y_tot, lw=2.2, color=color, ls='solid', label=time_lbl)
+            ax.plot(X_tot, y_tot, lw=2.2, color=color, ls='solid', label=time_lbl)
+        
         # species (own linestyle), no extra legend spam
+        sp_xkey = 'lgr' if profile == 'm' else 'lgrm'
         for ind, sp in enumerate(species_names):
             label = '_nolegend_'
             if profile == 'trelax' and ind == 1:
                 label = time_lbl
+            x_sp = data['species'][sp][sp_xkey]   # per-species log grid
+            X_sp = 10.0**x_sp
             y_sp = data['species'][sp][profile]
-            ax.plot(X, y_sp, lw=1.8, color=color, ls=style_map[sp], label=label)
+            ax.plot(X_sp, y_sp, lw=1.8, color=color, ls=style_map[sp], label=label)
 
+    # Cosmetics
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.set_xlim([xmin * 0.8, xmax * 1.2])

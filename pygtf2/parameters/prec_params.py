@@ -23,7 +23,7 @@ class PrecisionParams:
     def __init__(
         self,
         eps_du : float = 1.0e-4,
-        eps_dr : float = 1.0e-12,
+        eps_dr : float = 1.0e-3,
         eps_dt : float = 1.0e-3,
         max_iter_cr : int = 10,
         max_iter_dr : int = 100,

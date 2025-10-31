@@ -135,6 +135,7 @@ class State:
         # --- imports
         from pygtf2.io.read import import_metadata, load_snapshot_bundle
         from pygtf2.config import Config
+        from pygtf2.util.calc import calc_rho_c
 
         # --- metadata + snapshot
         meta = import_metadata(p)
@@ -149,40 +150,15 @@ class State:
         if config.io.chatter:
             print("Setting state variables from snapshot...") 
 
-        # ===== Grid (aligned across species at snapshot time) =====
-        # log_r are the outer edges (i=1..N) in log10; prepend r[0]=0
-        log_r = snap['log_r'].astype(np.float64)        # (N,)
-        r_edges = np.empty(log_r.size + 1, dtype=np.float64)
-        r_edges[0]  = 0.0
-        r_edges[1:] = 10.0**log_r                       # (N+1,)
-
-        # log_rmid are shell centers (common for all species at snapshot time)
-        rmid_1d = 10.0**snap['log_rmid'].astype(np.float64)   # (N,)
-
         # species ordering: use config.spec keys (in insertion order)
         labels = list(config.spec.keys())
         s = len(labels)
-        N = rmid_1d.size
+        N = snap['log_rmid'].size
         Np1 = N + 1
-
-        # broadcast per-species grids
-        state.r    = np.broadcast_to(r_edges, (s, Np1)).copy()   # (s, N+1)
-        state.rmid = np.broadcast_to(rmid_1d, (s, N)).copy()     # (s, N)
-
-        # ===== Totals (from file) =====
-        # Totals are single arrays at snapshot time
-        # m_tot is given at outer edges (i=1..N); prepend 0.0 for r[0]
-        m_tot_edges = np.empty(Np1, dtype=np.float64)
-        m_tot_edges[0]  = 0.0
-        m_tot_edges[1:] = snap['m_tot'].astype(np.float64)       # (N,)
-        state.m_tot   = m_tot_edges                               # (N+1,)
-        state.rho_tot = snap['rho_tot'].astype(np.float64)        # (N,)
-        state.v2_tot  = snap['v2_tot'].astype(np.float64)         # (N,)
-        state.p_tot   = snap['p_tot'].astype(np.float64)          # (N,)
-        state.u_tot   = 1.5 * state.v2_tot.copy()
 
         # ===== Per-species fields =====
         # Allocate per-species arrays
+        state.r      = np.zeros((s, Np1), dtype=np.float64)
         state.m      = np.zeros((s, Np1), dtype=np.float64)
         state.rho    = np.zeros((s, N),   dtype=np.float64)
         state.v2     = np.zeros((s, N),   dtype=np.float64)
@@ -197,16 +173,21 @@ class State:
             if name not in species_block:
                 raise KeyError(f"Species '{name}' in config not found in snapshot file.")
             sd = species_block[name]
-            # m is given at outer edges (length N); prepend 0.0 for r[0]
+            # m and r given at outer edges (length N); prepend 0.0
+            r_edges = np.empty(Np1, dtype=np.float64)
+            r_edges[0]  = 0.0
+            r_edges[1:] = 10**sd['lgr'].astype(np.float64)
             m_edges = np.empty(Np1, dtype=np.float64)
             m_edges[0]  = 0.0
             m_edges[1:] = sd['m'].astype(np.float64)
+            state.r[k]      = r_edges
             state.m[k]      = m_edges
             state.rho[k]    = sd['rho'].astype(np.float64)
             state.v2[k]     = sd['v2'].astype(np.float64)
             state.p[k]      = sd['p'].astype(np.float64)
             state.trelax[k] = sd['trelax'].astype(np.float64)
             state.u[k]      = 1.5 * state.v2[k].copy()
+        state.rmid = 0.5 * (state.r[:,1:] + state.r[:, :-1])
 
         # ===== Time + bookkeeping =====
         state.t             = float(snap['time'])
@@ -220,8 +201,9 @@ class State:
         state.dr_max = float(prec.eps_dr)
 
         # quick diagnostics (global)
-        state.maxvel     = float(np.sqrt(np.max(state.v2_tot)))
+        state.maxvel     = float(np.sqrt(np.max(state.v2)))
         state.mintrelax  = float(np.min(state.trelax))
+        state.rho_c      = calc_rho_c(state.rmid, state.rho)
 
         # running diagnostics
         state.n_iter_cr = 0
@@ -480,14 +462,16 @@ class State:
                 v2[i, 0] = p[i, 0] / rho[i, 0]
                 u[i, 0] = 1.5 * v2[i, 0]
 
-        trelax = 1.0 / (np.sqrt(v2) * rho)
+        # Recompute pressure of central bin such that HE is guaranteed
+        srho_c = rho[:, 1] + rho[:, 0]
+        r_c = r[:, 1]
+        dr_c = r[:, 2] - r[:, 0]
+        m_enc_c = np.sum(m[:, 1])
+        p[:, 0] = p[:, 1] + srho_c * dr_c * m_enc_c / (4.0 * r_c**2)
+        v2[:, 0] = p[:, 0] / rho[:, 0]
+        u[:, 0] = 1.5 * v2[:, 0]
 
-        # Compute totals
-        m_tot   = m.sum(axis=0)
-        rho_tot = rho.sum(axis=0)
-        p_tot   = p.sum(axis=0)
-        v2_tot = p_tot / rho_tot
-        u_tot  = 1.5 * v2_tot
+        trelax = 1.0 / (np.sqrt(v2) * rho)
 
         self.m          = m
         self.rmid       = r_mid
@@ -497,19 +481,13 @@ class State:
         self.v2         = v2
         self.trelax     = trelax
 
-        self.m_tot      = m_tot
-        self.rho_tot    = rho_tot
-        self.p_tot      = p_tot
-        self.v2_tot     = v2_tot
-        self.u_tot      = u_tot
-
-    def _ensure_virial_equilibrium(self):
+    def _ensure_hydrostatic_equilibrium(self):
         """
         Fine-tunes initial profile to ensure hydrostatic equilibrium.
-        Iteratively runs revirialize() until max |dr/r| < eps_dr.
+        First update pressure with a backward sweep, then
+        iteratively runs revirialize() until max |dr/r| < eps_dr.
         """
-        from pygtf2.evolve.hydrostatic import revirialize_res_damp
-        from pygtf2.evolve.realign import realign, realign_extensive
+        from pygtf2.evolve.hydrostatic import revirialize_interp, compute_he_pressures
         chatter = self.config.io.chatter
 
         if chatter:
@@ -518,97 +496,55 @@ class State:
         r_new = self.r.astype(np.float64, copy=True)
         rho_new = self.rho.astype(np.float64, copy=True)
         p_new = self.p.astype(np.float64, copy=True)
-        m_tot_new = self.m_tot.astype(np.float64, copy=False)
+        m = self.m.astype(np.float64, copy=False)
 
+        # Update pressure with backward sweep
+        p_out, res_old, res_new = compute_he_pressures(self.r, self.rho, self.p, m)
+        p_new[:,:] = p_out[:,:]
+        if chatter:
+            print(f"Initial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
+
+        # Iterative revir
         eps_dr = float(self.config.prec.eps_dr)
-
-        realign_after = False
-
-        if realign_after:
-            j = 0             # FOR REALIGN AFTER
+        i = 0
         while True:
-            if realign_after:
-                j += 1        # FOR REALIGN AFTER
-            i = 0
-            while True:
-                i += 1
-                status, r_new, rho_new, p_new, dr_max_new = revirialize_res_damp(r_new, rho_new, p_new, m_tot_new, self.frac)
-                if status == 'shell_crossing':
-                    raise RuntimeError("Shell crossing!")
-                if np.all(r_new == r_new[0]):
-                    print('all the same')
-                else:
-                    # print('different!')
-                    diff = r_new[1] - r_new[0]
-                    nonzero_mask = diff != 0
-                    indices = np.nonzero(nonzero_mask)[0]
-                    n_nonzero = int(indices.size)
-                    if n_nonzero:
-                        max_abs = float(np.max(np.abs(diff[indices])))
-                        idx_list = indices.tolist()
-                    else:
-                        max_abs = 0.0
-                        idx_list = []
-                    print(f"{i}: Nonzero positions: {n_nonzero}, max abs among them: {max_abs:.6g}")#, indices: {idx_list}")
-                # if i >= 98:
-                    # print(r_new[:,:10])
-                    # plot_r_markers(r_new[:,:10])
-                if not realign_after:
-                    v2_new = p_new / rho_new                                                                                # FOR PERSISTENT REALIGN
-                    r_new, rho_new, u_new, v2_new, p_new, m_new, m_tot_new = realign_extensive(r_new, rho_new, v2_new)      # FOR PERSISTENT REALIGN
-                # r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)
-                # if dr_max_new < eps_dr:
-                #     break
-                if i >= 100:
-                    raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
-            if chatter:
-                if realign_after:
-                    print(f"j={j}: HE achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")           # FOR REALIGN AFTER
-                else:
-                    print(f"HE achieved in {i} revir+realign iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")      # FOR PERSISTENT REALIGN
+            i += 1
+            status, r_new, rho_new, p_new, dr_max_new, he_res = revirialize_interp(r_new, rho_new, p_new, m)
+            
+            if status == 'shell_crossing':
+                raise RuntimeError(f"Initial revir iter {i}: Shell crossing!")
 
-            if realign_after:
-                v2_new = p_new / rho_new                                                                                  # FOR REALIGN AFTER
-                r_new, rho_new, v2_new, p_new, m_new, m_tot_new = realign(r_new, rho_new, v2_new)                         # FOR REALIGN AFTER
-                r_new, rho_new, u_new, v2_new, p_new, m_new, m_tot_new = realign_extensive(r_new, rho_new, v2_new)        # FOR REALIGN AFTER
+            if dr_max_new < eps_dr:
+                break
 
-                if i == 1:                                                                                                # FOR REALIGN AFTER
-                    break                                                                                                 # FOR REALIGN AFTER
-            else:
-                break                                                                                                       # FOR PERSISTENT REALIGN
+            if i >= 10:
+                raise RuntimeError("Failed to achieve hydrostatic equilibrium in 10 iterations")
 
-        if realign_after:
-            if chatter:                                                                                                           # FOR REALIGN AFTER
-                print(f"Hydrostatic equilibrium achieved after {j} realignments. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")    # FOR REALIGN AFTER
+        v2_new = p_new / rho_new
 
         self.r = r_new
         self.rho = rho_new
         self.p = p_new
         self.v2 = v2_new
-        self.m = m_new
         self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-        self.u = u_new
+        self.u = 1.5 * v2_new
         self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
-        
-        self.m_tot      = m_tot_new
-        self.rho_tot    = rho_new.sum(axis=0)
-        self.p_tot      = p_new.sum(axis=0)
-        self.v2_tot     = self.p_tot / self.rho_tot
-        self.u_tot      = 1.5 * self.v2_tot
 
-        # if chatter:
-        #     print(f"Hydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+        if chatter:
+            print(f"Hydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
 
     def reset(self):
         """
         Resets initial state
         """
+        from pygtf2.util.calc import calc_rho_c
+
         config = self.config
         prec = config.prec
 
         self.r = self._setup_grid()
         self._initialize_grid()
-        # self._ensure_virial_equilibrium()
+        self._ensure_hydrostatic_equilibrium()
 
         self.t = 0.0                        # Current time in simulation units
         self.step_count = 0                 # Global integration step counter (never reset)
@@ -617,8 +553,9 @@ class State:
         self.du_max = prec.eps_du           # Initialize the max du to upper limit
         self.dr_max = prec.eps_dr           # Initialize the max dr to upper limit
 
-        self.maxvel = float(np.sqrt(np.max(self.v2)))
-        self.mintrelax = float(np.min(self.trelax))
+        self.maxvel     = float(np.sqrt(np.max(self.v2)))
+        self.mintrelax  = float(np.min(self.trelax))
+        self.rho_c      = calc_rho_c(self.rmid, self.rho)
 
         # For diagnostics
         self.n_iter_cr = 0

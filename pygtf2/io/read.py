@@ -213,6 +213,8 @@ def extract_snapshot_data(filename):
           'p_tot'    : array,
           'species'  : {
               'dm': {
+                  'lgr'   : array,
+                  'lgrm'  : array,
                   'm'     : array,
                   'rho'   : array,
                   'v2'    : array,
@@ -249,9 +251,11 @@ def extract_snapshot_data(filename):
 
     # Detect species blocks
     for name in colnames:
-        if name.startswith('m['):
+        if name.startswith('lgr['):
             label = name.split('[',1)[1].rstrip(']')
             out['species'][label] = {
+                'lgr'   : data[:, idx[f'lgr[{label}]']],
+                'lgrm'  : data[:, idx[f'lgrm[{label}]']],
                 'm'     : data[:, idx[f'm[{label}]']],
                 'rho'   : data[:, idx[f'rho[{label}]']],
                 'v2'    : data[:, idx[f'v2[{label}]']],

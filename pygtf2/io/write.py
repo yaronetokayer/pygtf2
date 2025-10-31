@@ -105,14 +105,13 @@ def write_log_entry(state, start_step):
         nlog = ( step - start_step ) % nlog
 
     header = f"{'step':>10}  {'time':>12}  {'<dt>':>12}  {'rho_c':>12}  {'v_max':>12}  {'<dt lim>':>8}  {'<dr lim>':>8}  {'<du lim>':>8}  {'<n_iter_cr>':>11}  {'<n_iter_dr>':>11}\n"
-    new_line = f"{step:10d}  {state.t:12.6e}  {state.dt_cum / nlog:12.6e}  {state.rho_tot[0]:12.6e}  {state.maxvel:12.6e}  {state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}  {state.dr_max_cum / prec.eps_dr / nlog:8.2e}  {state.du_max_cum / prec.eps_du / nlog:8.2e}  {state.n_iter_cr / nlog:11.5e}  {state.n_iter_dr / nlog:11.5e}\n"
+    new_line = f"{step:10d}  {state.t:12.6e}  {state.dt_cum / nlog:12.6e}  {state.rho_c:12.6e}  {state.maxvel:12.6e}  {state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}  {state.dr_max_cum / prec.eps_dr / nlog:8.2e}  {state.du_max_cum / prec.eps_du / nlog:8.2e}  {state.n_iter_cr / nlog:11.5e}  {state.n_iter_dr / nlog:11.5e}\n"
 
     if step == start_step:
         new_line = new_line[:26] + f"         N/A" +  new_line[38:66] + f"       N/A       N/A       N/A          N/A          N/A\n"
 
     _update_file(filepath, header, new_line, step)
 
-    state.n_iter_du = 0
     state.n_iter_cr = 0
     state.n_iter_dr = 0
     state.dt_cum = 0.0
@@ -149,11 +148,25 @@ def write_profile_snapshot(state, initialize=False):
     filename = os.path.join(io.base_dir, io.model_dir, f"profile_{state.snapshot_index}.dat")
 
     # Use species 0 for the r columns.
-    r_common    = state.r[0]
-    rmid_common = state.rmid[0]
-    N = r_common.size - 1
+    r = state.r
+    rmid = state.rmid
+    s, Np1 = r.shape
+    N = Np1 - 1
     labels = list(state.labels)
     s = len(labels)
+
+    # Compute totals on the fly
+    from pygtf2.util.interpolate import sum_intensive_loglog, sum_extensive_loglog
+    r_tot = np.zeros((Np1,))
+    r_tot_min = np.min(r[:,1:])
+    r_tot_max = np.max(r[:,1:])
+    r_tot[1:] = np.geomspace(r_tot_min, r_tot_max, num=N, endpoint=True)
+    r_totmid = 0.5 * (r_tot[1:] + r_tot[:-1])
+
+    m_tot = sum_extensive_loglog(r_tot, r, state.m)
+    rho_tot = sum_intensive_loglog(r_totmid, rmid, state.rho)
+    p_tot = sum_intensive_loglog(r_totmid, rmid, state.p)
+    v2_tot = p_tot / rho_tot
 
     # Build header
     header_cols = [
@@ -168,6 +181,8 @@ def write_profile_snapshot(state, initialize=False):
     # Per-species blocks
     for name in labels:
         header_cols.extend([
+            f"{'lgr['+name+']':>13}",
+            f"{'lgrm['+name+']':>13}",
             f"{'m['+name+']':>13}",
             f"{'rho['+name+']':>13}",
             f"{'v2['+name+']':>13}",
@@ -183,16 +198,18 @@ def write_profile_snapshot(state, initialize=False):
         for i in range(N):
             row = [
                 f"{i:6d}",
-                f"{np.log10(r_common[i+1]): 13.6e}",
-                f"{np.log10(rmid_common[i]): 13.6e}",
-                f"{state.m_tot[i+1]: 13.6e}",
-                f"{state.rho_tot[i]: 13.6e}",
-                f"{state.v2_tot[i]: 13.6e}",
-                f"{state.p_tot[i]: 13.6e}",
+                f"{np.log10(r_tot[i+1]): 13.6e}",
+                f"{np.log10(r_totmid[i]): 13.6e}",
+                f"{m_tot[i+1]: 13.6e}",
+                f"{rho_tot[i]: 13.6e}",
+                f"{v2_tot[i]: 13.6e}",
+                f"{p_tot[i]: 13.6e}",
             ]
             # Per-species fields
             for k in range(s):
                 row.extend([
+                    f"{np.log10(state.r[k, i+1]): 13.6e}",
+                    f"{np.log10(state.rmid[k, i]): 13.6e}",
                     f"{state.m[k, i+1]: 13.6e}",
                     f"{state.rho[k, i]: 13.6e}",
                     f"{state.v2[k, i]: 13.6e}",
@@ -284,7 +301,7 @@ def write_time_evolution(state):
     row = [ 
         f"{step:10d}",
         f"{state.t: 13.6e}",
-        f"{state.rho_tot[0]: 13.6e}",
+        f"{state.rho_c: 13.6e}",
         f"{state.maxvel: 13.6e}",
         f"{state.mintrelax: 13.6e}",
     ]
