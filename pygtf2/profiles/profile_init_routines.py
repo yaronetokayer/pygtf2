@@ -2,6 +2,7 @@ import numpy as np
 from pygtf2.profiles.nfw import menc_nfw, sigr_nfw
 from pygtf2.profiles.abg import menc_abg, sigr_abg
 from pygtf2.profiles.truncated_nfw import menc_trunc, sigr_trunc
+from pygtf2.profiles.exp import menc_exp, sigr_exp
 
 def _as_f64(x):
     """
@@ -36,6 +37,8 @@ def menc(r, init, prec, **kwargs):
         return menc_trunc(r, prec, **kwargs)
     elif profile == "abg":
         return menc_abg(r, init, prec)
+    elif profile == "exp":
+        return menc_abg(r)
     else:
         raise ValueError(f"Unsupported profile type: {profile}")
 
@@ -65,5 +68,7 @@ def sigr(r, init, prec, **kwargs):
         return sigr_trunc(r, prec, **kwargs)
     elif profile == "abg":
         return sigr_abg(r, init, prec)
+    elif profile == "exp":
+        return menc_exp(r, prec)
     else:
         raise ValueError(f"Unsupported profile type: {profile}")
