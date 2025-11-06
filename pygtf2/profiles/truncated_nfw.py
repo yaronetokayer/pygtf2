@@ -91,7 +91,8 @@ def generate_rho_lookup(init, prec, chatter, n_points=10000, phi_min=1e-7):
         Interpolated function for rho(phi).
     """
     if chatter:
-        print("Generating lookup for rho(phi)...")
+        INDENT = ' ' * 8
+        print(f"{INDENT}Generating lookup for rho(phi)...")
 
     phi_max = float(1.0 - init.Zt - 1e-4)
 
@@ -152,7 +153,8 @@ def integrate_potential(init, grid, chatter, rho_interp):
     """
 
     if chatter:
-        print("Computing potential profile for truncated NFW halo...")
+        INDENT = ' ' * 8
+        print(f"{INDENT}Computing potential profile for truncated NFW halo...")
     r_min = float(grid.rmin) / 2.0
     eps = 1e-6  # A small number used for finite differences
     Zt = float(init.Zt)
@@ -181,8 +183,8 @@ def integrate_potential(init, grid, chatter, rho_interp):
     # Step 3: Integrate until potential crosses zero
     while y[0] > 0.0:
         # Only print if r has changed by at least 0.5 since last print
-        if chatter and (len(rad) == 1 or abs(r1 - r_last_print) >= 1.0):
-                print(f"\rIntegrating Poisson equation outward: r = {r1:.6f}, phi = {y[0]:.6f}", end='', flush=True)
+        if chatter and (len(rad) == 1 or abs(r1 - r_last_print) >= 1.5):
+                print(f"\r{INDENT}Integrating Poisson equation outward: r = {r1:.6f}, phi = {y[0]:.6f}", end='', flush=True)
                 r_last_print = r1
         step_size = (r2 - r1) / Nstep
 
@@ -215,7 +217,7 @@ def integrate_potential(init, grid, chatter, rho_interp):
         r2 = r1 + dr
 
     if chatter:
-        print(f"\rIntegrating Poisson equation outward: r = {r1:.6f}, phi = {y[0]:.6f}")
+        print(f"\r{INDENT}Integrating Poisson equation outward: r = {r1:.6f}, phi = {y[0]:.6f}")
 
     # Step 4: truncate and return values
     rcut = float(r1)
@@ -301,7 +303,8 @@ def menc_trunc(r, prec, chatter=True, pot_rad=None, pot_interp=None, rho_interp=
         )
         out[i] = val
         if chatter:
-            print(f"\rComputing Menc: r = {ri:.3f}, m = {out[i]:.3f}", end='', flush=True)
+            INDENT = ' ' * 8
+            print(f"\r{INDENT}Computing Menc: r = {ri:.3f}, m = {out[i]:.3f}", end='', flush=True)
     if chatter:
         print("")  # Finalize output line
 
@@ -346,7 +349,8 @@ def generate_sigr_integrand_lookup(
         Interpolated function for velocity dispersion squared.
     """
     if chatter:
-        print("Generating lookup for v2 integrand...")
+        INDENT = ' ' * 8
+        print(f"{INDENT}Generating lookup for v2 integrand...")
     
     r_lo = float(grid.rmin) / 2.0 - 1e-4
     rgrid = np.geomspace(r_lo, float(rcut), int(n_points), dtype=np.float64)
@@ -436,7 +440,8 @@ def sigr_trunc(
 
             out[i] = integral / density
         if chatter:
-            print(f"\rComputing v2: r = {ri:.3f}, v2 = {out[i]:.3f}", end='', flush=True)
+            INDENT = ' ' * 8
+            print(f"\r{INDENT}Computing v2: r = {ri:.3f}, v2 = {out[i]:.3f}", end='', flush=True)
     if chatter:
         print("")  # Finalize output line
 

@@ -208,7 +208,7 @@ def write_profile_snapshot(state, initialize=False):
 
     Columns:
         i, log_r, log_rmid,
-        m_tot, rho_tot, v2_tot, p_tot,
+        m_tot, rho_tot, p_tot,
         [for each species in state.labels in order:]
             m[<label>], rho[<label>], v2[<label>], p[<label>], trelax[<label>]
 
@@ -241,7 +241,6 @@ def write_profile_snapshot(state, initialize=False):
     m_tot = sum_extensive_loglog(r_tot, r, state.m)
     rho_tot = sum_intensive_loglog(r_totmid, rmid, state.rho)
     p_tot = sum_intensive_loglog(r_totmid, rmid, state.p)
-    v2_tot = p_tot / rho_tot
 
     # Build header
     header_cols = [
@@ -250,7 +249,6 @@ def write_profile_snapshot(state, initialize=False):
         f"{'log_rmid':>13}",
         f"{'m_tot':>13}",
         f"{'rho_tot':>13}",
-        f"{'v2_tot':>13}",
         f"{'p_tot':>13}",
     ]
     # Per-species blocks
@@ -277,7 +275,6 @@ def write_profile_snapshot(state, initialize=False):
                 f"{np.log10(r_totmid[i]): 13.6e}",
                 f"{m_tot[i+1]: 13.6e}",
                 f"{rho_tot[i]: 13.6e}",
-                f"{v2_tot[i]: 13.6e}",
                 f"{p_tot[i]: 13.6e}",
             ]
             # Per-species fields

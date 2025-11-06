@@ -69,8 +69,8 @@ class State:
         self.char = self._set_param()
 
         # Check for truncated NFW profile - numerically integrate potential
+        first = True
         for name in self.labels:
-            first = True
             if self.config.spec[name].init.profile == 'truncated_nfw':
                 print(f"Computing truncated NFW potential for species {name}:")
                 from pygtf2.profiles.truncated_nfw import integrate_potential, generate_rho_lookup
@@ -333,7 +333,7 @@ class State:
                 cvir = rvir / rs
 
             char.fc = float(fNFW(cvir))
-            char.m_s = mtot / float(const.xhubble) / char.fc
+            char.m_s = mtot / char.fc / float(const.xhubble) 
 
         #--- Set rho_s and v0 ---
         char.rho_s = char.m_s / ( 4.0 * np.pi * char.r_s**3 )
@@ -502,7 +502,7 @@ class State:
         p_out, res_old, res_new = compute_he_pressures(self.r, self.rho, self.p, m)
         p_new[:,:] = p_out[:,:]
         if chatter:
-            print(f"Initial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
+            print(f"\tInitial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
 
         # Iterative revir
         eps_dr = float(self.config.prec.eps_dr)
@@ -517,8 +517,8 @@ class State:
             if dr_max_new < eps_dr:
                 break
 
-            if i >= 10:
-                raise RuntimeError("Failed to achieve hydrostatic equilibrium in 10 iterations")
+            if i >= 100:
+                raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
 
         v2_new = p_new / rho_new
 
@@ -531,7 +531,7 @@ class State:
         self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
 
         if chatter:
-            print(f"Hydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+            print(f"\tHydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
 
     def reset(self):
         """
@@ -693,32 +693,3 @@ class State:
         # Copy the __dict__ and omit the 'config' key
         filtered = {k: v for k, v in self.__dict__.items() if k != "config"}
         return f"{self.__class__.__name__}(\n{pprint.pformat(filtered, indent=2)}\n)"
-
-import matplotlib.pyplot as plt
-import numpy as np
-
-def plot_r_markers(r_slice):
-    """
-    r_slice : array of shape (s, m)
-        Radii for each species (s species, m points each).
-    """
-    s, m = r_slice.shape
-    fig, axes = plt.subplots(s, 1, figsize=(10, 0.75*s), sharex=True)
-
-    if s == 1:
-        axes = [axes]
-
-    for k, ax in enumerate(axes):
-        ax.set_xscale("log")
-        for j, rj in enumerate(r_slice[k]):
-            ax.axvline(rj, color="k", lw=1)
-            ax.text(rj, -0.05, str(j), ha="center", va="top",
-                    transform=ax.get_xaxis_transform(), fontsize=8)
-        ax.set_ylim(0, 1)
-        ax.set_xlim(3e-3, 1e-1)
-        ax.set_yticks([])
-        ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
-
-    axes[-1].set_xlabel("r (log scale)")
-    plt.tight_layout()
-    plt.show()

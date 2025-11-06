@@ -1,6 +1,7 @@
 import numpy as np
 from numba import njit, float64, types
 from pygtf2.util.interpolate import interp_m_enc
+from pygtf2.util.calc import add_bkg_pot
 
 def revirialize_interp(r, rho, p, m) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, float | None]:
     """

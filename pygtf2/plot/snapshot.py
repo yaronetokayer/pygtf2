@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import subprocess
 from tqdm import tqdm
 import shutil
@@ -38,7 +39,15 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
 
     # Pick linestyles for species; stable mapping by species name
     species_names = sorted(data_list[0]['species'].keys()) if data_list and 'species' in data_list[0] else []
-    base_styles = ['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))]
+    # base_styles = ['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))]
+    base_styles = [
+        (0, (5, 2)),              # long dash
+        (0, (1, 1)),              # fine dotted
+        (0, (3, 1, 1, 1)),        # dash-dot pattern
+        (0, (7, 3, 1, 3)),        # long dash, small dot, medium gap
+        (0, (5, 1)),              # medium dash, tight gaps
+        (0, (3, 5, 1, 5, 1, 5)),  # mixed dash/dot combo
+    ]
     style_map = {name: base_styles[i % len(base_styles)] for i, name in enumerate(species_names)}
 
     # Totals use the global x keys
@@ -56,10 +65,10 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
         xmin = min(xmin, 10.0**np.min(x_tot))
         xmax = max(xmax, 10.0**np.max(x_tot))
         
-        if profile in {'rho', 'm', 'v2', 'p'}:
+        if profile in {'rho', 'm', 'p'}:
             y_tot = data[profile + '_tot'] if profile != 'm' else data['m_tot']
             y_candidates = [y_tot]
-        else:  # 'trelax' has no total
+        else:  # 'trelax' and 'v2' have no total
             y_candidates = []
 
         for sp in species_names:
@@ -71,17 +80,6 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
             if y_pos.size:
                 posmin = min(posmin, float(np.min(y_pos)))
                 posmax = max(posmax, float(np.max(y_pos)))
-
-        # # update limits
-        # # x (edges for m, mid otherwise)
-        # xmin = min(xmin, 10.0**np.min(x))
-        # xmax = max(xmax, 10.0**np.max(x))
-        # # y (only positive for log)
-        # for y in y_all:
-        #     y_pos = y[y > 0]
-        #     if y_pos.size:
-        #         posmin = min(posmin, np.min(y_pos))
-        #         posmax = max(posmax, np.max(y_pos))
 
     # Safeguard limits
     if not np.isfinite(posmin) or posmin <= 0:
@@ -97,7 +95,7 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
         # totals (solid), if applicable
         x_tot = data[xkey_tot]
         X_tot = 10.0**x_tot
-        if profile in {'rho', 'm', 'v2', 'p'}:
+        if profile in {'rho', 'm', 'p'}:
             y_tot = data[profile + '_tot'] if profile != 'm' else data['m_tot']
             ax.plot(X_tot, y_tot, lw=2.2, color=color, ls='solid', label=time_lbl)
         
@@ -105,7 +103,7 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
         sp_xkey = 'lgr' if profile == 'm' else 'lgrm'
         for ind, sp in enumerate(species_names):
             label = '_nolegend_'
-            if profile == 'trelax' and ind == 1:
+            if profile in {'trelax', 'v2'} and ind == 1:
                 label = time_lbl
             x_sp = data['species'][sp][sp_xkey]   # per-species log grid
             X_sp = 10.0**x_sp
@@ -121,7 +119,22 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
     ax.set_ylabel(profile, fontsize=14)
     ax.tick_params(axis='both', labelsize=12)
     if legend:
-        ax.legend()
+        # ax.legend() # OLD
+        # 1) Time legend (colors): use the labels already attached to plotted lines
+        time_legend = ax.legend(loc='lower left', frameon=True)
+
+        # 2) Species legend (linestyles in black), including 'total' as solid
+        species_handles = [Line2D([0], [0], lw=2.2, color='black', ls='solid', label='total')]
+        species_handles += [
+            Line2D([0], [0], lw=1.8, color='black', ls=style_map[sp], label=sp)
+            for sp in species_names
+        ]
+
+        species_legend = ax.legend(handles=species_handles, loc='lower center', frameon=True, ncol=1)
+
+        # Keep both legends
+        ax.add_artist(time_legend)
+        ax.add_artist(species_legend)
     if grid:
         ax.grid(True, which="both", ls="--", alpha=0.4)
 
@@ -183,7 +196,8 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', base_dir=None, filepath
         plot_profile(axs, profiles_list[0], data_list, legend=True, grid=grid, for_movie=for_movie)
     else:
         for ind, ax in enumerate(axs):
-            legend = False if ind < len(axs) - 1 else True
+            # legend = False if ind < len(axs) - 1 else True
+            legend = False if ind > 0 else True
             plot_profile(ax, profiles_list[ind], data_list, legend=legend, grid=grid, for_movie=for_movie)
 
     if filepath:

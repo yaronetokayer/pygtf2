@@ -1,7 +1,29 @@
 import numpy as np
-from numba import njit, float64, int64
+from numba import njit, types, float64
 from pygtf2.util.interpolate import sum_intensive_loglog_single
 
+def add_bkg_pot(r, m, bkg):
+    """
+    Add a background potential to the mass array.
+
+    Arguments
+    ---------
+    r : ndarray, shape (N+1,)
+        Edge radii
+    m : ndarray, shape (N+1,)
+        Enclosed mass at edge radii
+    bkg : str
+        Background potential selected
+
+    Returns
+    -------
+    m_tot : ndarray, shape (N+1,)
+        The original m array with the background potential added
+    """
+
+    pass
+
+@njit(types.float64(types.float64[:, ::1], types.float64[:, ::1]), fastmath=True, cache=True)
 def calc_rho_c(rmid, rho):
     """
     Computes central density of system at smallest non-zero radial point.
@@ -24,6 +46,7 @@ def calc_rho_c(rmid, rho):
 
     return float(rho_c)
 
+@njit(float64[:](float64[:], float64[:], float64[:]), fastmath=True, cache=True)
 def mass_fraction_radii(r_edges, m_edges, fracs):
     """
     Compute radii at which a given set of mass fractions of the total enclosed mass are reached.

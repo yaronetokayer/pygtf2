@@ -67,7 +67,15 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
 
                 # per-species (unique linestyle per species for this model)
                 # reset style cycle for each model so species styles are consistent per-model
-                styles = cycle(['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))])
+                # styles = cycle(['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))])
+                styles = cycle([
+                    (0, (5, 2)),              # long dash
+                    (0, (1, 1)),              # fine dotted
+                    (0, (3, 1, 1, 1)),        # dash-dot pattern
+                    (0, (7, 3, 1, 3)),        # long dash, small dot, medium gap
+                    (0, (5, 1)),              # medium dash, tight gaps
+                    (0, (3, 5, 1, 5, 1, 5)),  # mixed dash/dot combo
+                ])
                 # iterate species in sorted name order for stable legends
                 for sp_name in sorted(data['species'].keys()):
                     rho_c_k = data['species'][sp_name]['rho_c']
@@ -86,7 +94,15 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
 
         # consistent linestyle per species
         # (map by species name so the same species always looks the same)
-        base_styles = ['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))]
+        # base_styles = ['dashed', 'dashdot', 'dotted', (0, (1, 1)), (0, (3, 1, 1, 1))]
+        base_styles = [
+            (0, (5, 2)),              # long dash
+            (0, (1, 1)),              # fine dotted
+            (0, (3, 1, 1, 1)),        # dash-dot pattern
+            (0, (7, 3, 1, 3)),        # long dash, small dot, medium gap
+            (0, (5, 1)),              # medium dash, tight gaps
+            (0, (3, 5, 1, 5, 1, 5)),  # mixed dash/dot combo
+        ]
         species_names = sorted(data['species'].keys())
         style_map = {name: base_styles[i % len(base_styles)] for i, name in enumerate(species_names)}
 

@@ -16,6 +16,8 @@ class SimParams:
         Parameter b from Zhong & Shapiro (2025; arXiv:2505.18251)
     beta : float
         Parameter beta from Zhong & Shapiro (2025; arXiv:2505.18251)
+    bkg : str
+        String representing the background potential. So far implemented {None, 'hernq'}
     """
     def __init__(
             self, 
@@ -24,7 +26,8 @@ class SimParams:
             lnL_param : float = 0.11,
             alpha : float = 1.217,
             beta : float = 1.0,
-            b : float = 0.45
+            b : float = 0.45,
+            bkg : str = None
     ):
         self._t_halt = None
         self.rho_c_halt = rho_c_halt
@@ -32,6 +35,7 @@ class SimParams:
         self._alpha = None
         self._beta = None
         self._b = None
+        self._bkg = None
 
         self.t_halt = t_halt
         self.rho_c_halt = rho_c_halt
@@ -39,6 +43,7 @@ class SimParams:
         self.alpha = alpha
         self.beta = beta
         self.b = b
+        self.bkg = bkg
 
     @property
     def t_halt(self):
@@ -99,6 +104,22 @@ class SimParams:
         if value <= 0:
             raise ValueError("b must be positive")
         self._b = float(value)
+
+    @property
+    def bkg(self):
+        return self._bkg
+
+    @bkg.setter
+    def bkg(self, value):
+        bkg_strings = ('hernq_static', 'hernq_decay')
+        if value is None:
+            self._bkg = None
+            return
+        if not isinstance(value, str):
+            raise TypeError("bkg must be a string or None")
+        if value not in bkg_strings:
+            raise ValueError(f"bkg must be None or one of {bkg_strings}")
+        self._bkg = value
 
     def __repr__(self):
         attrs = [

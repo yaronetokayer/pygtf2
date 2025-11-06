@@ -163,13 +163,16 @@ def integrate_time_step(state, dt_prop, step_count):
         status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m)
         
         iter_dr = 0
+        redo_conduct = False
+
         while True:
             # Shell crossing
             if status == 'shell_crossing':
                 if iter_cr >= max_iter_cr:
-                    raise RuntimeError("Max iterations exceeded for shell crossing in conduction/revirialization step")
+                    raise RuntimeError(f"Step {step_count}: Max iterations exceeded for shell crossing in conduction/revirialization step")
                 dt_prop *= 0.5
                 iter_cr += 1
+                redo_conduct = True
                 break # Redo conduct_heat with original values and smaller dt
 
             # Check dr criterion
@@ -180,13 +183,17 @@ def integrate_time_step(state, dt_prop, step_count):
             if dr_max > eps_dr:
                 if iter_dr >= max_iter_dr:
                     print(f"step {step_count}")
-                    raise RuntimeWarning("Max iterations exceeded for dr in revirialization step")
+                    raise RuntimeWarning(f"Step {step_count}: Max iterations exceeded for dr in revirialization step")
                 iter_dr += 1
                 status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_new, rho_new, p_new, m)
                 continue # Check for shell crossing
 
             # Both criteria are met, break out of loop
             break
+
+        if redo_conduct:
+            continue
+
         break
 
     ### Step 3: Update state variables ###

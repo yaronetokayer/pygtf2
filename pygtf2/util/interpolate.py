@@ -257,8 +257,21 @@ def interp_m_enc(k, r, m) -> np.ndarray:
                 continue
 
             # constant tail beyond species j's maximum radius
+            # if x >= rj_max:
+            #     m_tot_on_k[t] += m_last
+            #     continue
+
+            # power-law extrapolation beyond species j's maximum radius
             if x >= rj_max:
-                m_tot_on_k[t] += m_last
+                r0 = rj[N-1]; r1 = rj[N]
+                m0 = mj[N-1]; m1 = mj[N]
+                # use last log–log slope; fall back to constant if unsafe
+                if r0 > 0.0 and m0 > 0.0 and m1 > 0.0 and r1 > r0:
+                    a = (np.log(m1) - np.log(m0)) / (np.log(r1) - np.log(r0))
+                    m_ext = m1 * np.exp(a * np.log(x / r1))
+                else:
+                    m_ext = m_last  # fallback for zeros/degeneracies
+                m_tot_on_k[t] += m_ext
                 continue
 
             # locate j1 such that rj[j1] <= x < rj[j1+1]
