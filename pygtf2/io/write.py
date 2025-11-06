@@ -134,8 +134,8 @@ def write_log_entry(state, start_step):
 
     # Now add the n_iter columns after the r50 cols
     header_cols.extend([
-        f"{'<n_iter_cr>':>11}",
-        f"{'<n_iter_dr>':>11}",
+        f"{'<n_it_cr>':>9}",
+        f"{'<n_it_dr>':>9}",
     ])
 
     header = "  ".join(header_cols) + "\n"
@@ -159,8 +159,8 @@ def write_log_entry(state, start_step):
             row.append(f"{r_50[k]:11.4e}")
 
         # Append N/A for iter counts
-        row.append(f"{'N/A':>11}")
-        row.append(f"{'N/A':>11}")
+        row.append(f"{'N/A':>9}")
+        row.append(f"{'N/A':>9}")
 
     else:
         # Normal numeric row
@@ -180,8 +180,8 @@ def write_log_entry(state, start_step):
             row.append(f"{r_50[k]: 11.4e}")
 
         # Append iter counts after r50 columns
-        row.append(f"{state.n_iter_cr / nlog:11.5e}")
-        row.append(f"{state.n_iter_dr / nlog:11.5e}")
+        row.append(f"{state.n_iter_cr / nlog:9.3e}")
+        row.append(f"{state.n_iter_dr / nlog:9.3e}")
 
     new_line = "  ".join(row) + "\n"
 

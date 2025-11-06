@@ -3,7 +3,6 @@ from pygtf2.parameters.io_params import IOParams
 from pygtf2.parameters.grid_params import GridParams
 from pygtf2.parameters.init_params import (
     InitParams,
-    NFWParams,
     make_init_params,
 )
 from pygtf2.parameters.spec_params import SpecParams
@@ -83,10 +82,10 @@ class Config:
         Returns the SpecParams object so it can be modified directly.
         """
         if name is None:
-            name = f"species{len(self.spec)}"
+            name = f"spec{len(self.spec)}"
         
         if init is None:
-            sp_init = NFWParams()
+            sp_init = 'nfw'
         elif isinstance(init, InitParams):
             sp_init = init
         elif isinstance(init, str):

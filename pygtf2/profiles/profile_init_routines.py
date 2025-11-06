@@ -30,7 +30,7 @@ def menc(r, init, prec, **kwargs):
         Enclosed mass at r, normalized by Mvir.
     """
     r = _as_f64(r)
-    profile = init.profile
+    profile = init.prof
     if profile == "nfw":
         return menc_nfw(r)
     elif profile == "truncated_nfw":
@@ -61,7 +61,7 @@ def sigr(r, init, prec, **kwargs):
         Velocity dispersion squared.
     """
     r = _as_f64(r)
-    profile = init.profile
+    profile = init.prof
     if profile == "nfw":
         return sigr_nfw(r, prec)
     elif profile == "truncated_nfw":

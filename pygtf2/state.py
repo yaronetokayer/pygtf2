@@ -60,8 +60,6 @@ class State:
     """
 
     def __init__(self, config):
-        from pygtf2.io.write import make_dir, write_metadata, write_profile_snapshot
-
         self.config = config
         if config.s < 1:
             raise ValueError("No species defined; add at least one before instantiating a State.")
@@ -71,7 +69,7 @@ class State:
         # Check for truncated NFW profile - numerically integrate potential
         first = True
         for name in self.labels:
-            if self.config.spec[name].init.profile == 'truncated_nfw':
+            if self.config.spec[name].init.prof == 'truncated_nfw':
                 print(f"Computing truncated NFW potential for species {name}:")
                 from pygtf2.profiles.truncated_nfw import integrate_potential, generate_rho_lookup
                 prec = config.prec
@@ -296,7 +294,7 @@ class State:
         label_ref = self.labels[kref]
         init_ref = config.spec[label_ref].init
         rs      = init_ref.r_s
-        profile = init_ref.profile
+        profile = init_ref.prof
 
         # --- Virial radius (global, from mtot) ---
         z = float(getattr(init_ref, "z", 0.0))
@@ -503,7 +501,7 @@ class State:
 
             # kwargs needed for non-analytic truncated NFW profile
             pot_rad = pot_interp = rho_interp = rcut = None
-            if init.profile == 'truncated_nfw':
+            if init.prof == 'truncated_nfw':
                 pot_rad = self.pot_rad[name]
                 pot_interp = self.pot_interp[name]
                 rho_interp = self.rho_interp[name]
@@ -523,7 +521,7 @@ class State:
 
         # Central smoothing for NFW profile
         for i, name in enumerate(labels):
-            if spec[name].init.profile == 'nfw':
+            if spec[name].init.prof == 'nfw':
                 r1 = r[i, 1]
                 rho_c_ideal = 1.0 / (r1 * (1.0 + r1)**2)
                 rho[i, 0] = 2.0 * rho_c_ideal - rho[i, 1]

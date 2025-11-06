@@ -1,7 +1,6 @@
 from typing import Dict, Any, Tuple
 from pygtf2.parameters.init_params import (
     InitParams,
-    NFWParams,
     make_init_params,
 )
 
@@ -22,11 +21,15 @@ class SpecParams:
             self, 
             m_part: float = 1.0, 
             frac: float = 1.0, 
-            init: InitParams | None = None
+            init: InitParams | Tuple | str = 'nfw'
         ):
-        self._m_part = float(m_part)
-        self._frac = float(frac)
-        self._init = init if init is not None else NFWParams()
+        self._m_part = None
+        self._frac = None
+        self._init = None
+
+        self.m_part = float(m_part)
+        self.frac = float(frac)
+        self.init = init
 
     @property
     def m_part(self) -> float:
@@ -53,7 +56,7 @@ class SpecParams:
         return self._init
 
     @init.setter
-    def init(self, value: InitParams | str | Tuple[str, Dict[str, Any]]):
+    def init(self, value: None | InitParams | str | Tuple[str, Dict[str, Any]]):
         if isinstance(value, InitParams):
             self._init = value
         elif isinstance(value, str):

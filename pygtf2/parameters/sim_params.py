@@ -148,12 +148,18 @@ class SimParams:
         self._bkg = validated
 
     def __repr__(self):
+        exclude = {'VALID_BKG_PROFILES', 'DEFAULT_BKG'}
         attrs = [
             attr for attr in dir(self)
-            if not attr.startswith('_') and not callable(getattr(self, attr))
+            if not attr.startswith('_')
+            and not callable(getattr(self, attr))
+            and attr not in exclude
         ]
         attr_strs = []
         for attr in attrs:
-            value = getattr(self, attr)
+            try:
+                value = getattr(self, attr)
+            except Exception:
+                value = '<error>'
             attr_strs.append(f"{attr}={repr(value)}")
         return f"{self.__class__.__name__}({', '.join(attr_strs)})"
