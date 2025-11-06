@@ -3,7 +3,7 @@ from numba import njit, float64, types
 from pygtf2.util.interpolate import interp_m_enc
 from pygtf2.util.calc import add_bkg_pot
 
-def revirialize_interp(r, rho, p, m) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, float | None]:
+def revirialize_interp(r, rho, p, m, bkg_param) -> tuple[str, np.ndarray | None, np.ndarray | None, np.ndarray | None, float | None]:
     """
     Multi-species re-virialization.
     Solves for radius adjustments and updates physical quantities for all species.
@@ -21,6 +21,8 @@ def revirialize_interp(r, rho, p, m) -> tuple[str, np.ndarray | None, np.ndarray
         Shell pressures per species.
     m : ndarray, shape (s, N+1)
         Total enclosed mass at edges, per species.
+    bkg_param : ndarray, shape (4,)
+        Parameters for background potential
 
     Returns
     -------
@@ -49,9 +51,12 @@ def revirialize_interp(r, rho, p, m) -> tuple[str, np.ndarray | None, np.ndarray
     rho_new = np.empty_like(rho)
     p_new   = np.empty_like(p)
     dr_max = 0.0
+    add_bkg_flag = bkg_param[0] != -1
 
     for k in range(s):
         m_totk = interp_m_enc(k, r_copy, m)
+        if add_bkg_flag:
+            m_totk += add_bkg_pot(r[k], bkg_param)
         a, b, c, y = build_tridiag_system_log(r[k], rho[k], p[k], m_totk)
         xk = solve_tridiagonal_thomas(a, b, c, y)
         dr_max = max(dr_max, float(np.max(np.abs(xk))))
@@ -64,7 +69,8 @@ def revirialize_interp(r, rho, p, m) -> tuple[str, np.ndarray | None, np.ndarray
     if np.any((r_copy[:,1:] - r_copy[:,:-1]) <= 0.0):
         return 'shell_crossing', r_copy, None, None, dr_max, None
 
-    he_res = compute_he_resid_norm(r_copy, rho_new, p_new, m)
+    # he_res = compute_he_resid_norm(r_copy, rho_new, p_new, m)
+    he_res = 1.0
 
     return 'ok', r_copy, rho_new, p_new, dr_max, he_res
 
@@ -339,14 +345,15 @@ def solve_tridiagonal_thomas(a, b, c, y) -> np.ndarray:
 
     return u
 
-@njit(float64(float64[:, :], float64[:, :], float64[:, :], float64[:,:]),
+@njit(float64(float64[:, :], float64[:, :], float64[:, :], float64[:,:], float64[:]),
     fastmath=True,cache=True)
-def compute_he_resid_norm(r, rho, p, m):
+def compute_he_resid_norm(r, rho, p, m, bkg_param):
     """
     Compute an (unscaled) norm of the HE residual
     """
     s, Np1 = r.shape
     res_vec = np.empty((s, Np1-2), dtype=np.float64)
+    add_bkg_flag = bkg_param[0] != -1
     
     dp = p[:, 1:] - p[:, :-1]
     srho = rho[:, 1:] + rho[:, :-1]
@@ -355,13 +362,15 @@ def compute_he_resid_norm(r, rho, p, m):
 
     for k in range(s):
         m_totk = interp_m_enc(k, r, m)
+        if add_bkg_flag:
+            m_totk += add_bkg_pot(r[k], bkg_param)
         res_vec[k] = - (4.0 / m_totk[1:-1]) * (rC[k]**2 / dr[k]) * (dp[k] / srho[k]) - 1.0
 
     return np.linalg.norm(res_vec)
 
-@njit(types.Tuple((float64[:, :], float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:,:]),
+@njit(types.Tuple((float64[:, :], float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:,:], float64[:]),
       fastmath=True, cache=True)
-def compute_he_pressures(r, rho, p, m):
+def compute_he_pressures(r, rho, p, m, bkg_param):
     """
     Compute pressure array such that the density profile will be in HE
     This is used after grid initialization to ensure stability in 
@@ -378,6 +387,8 @@ def compute_he_pressures(r, rho, p, m):
         Shell pressures per species.
     m_tot : ndarray, shape (s, N+1)
         Total enclosed mass at edges per species.
+    bkg_param : ndarray, shape (4,)
+        Parameters for background potential
 
     Returns
     -------
@@ -391,9 +402,11 @@ def compute_he_pressures(r, rho, p, m):
     s, Np1 = r.shape
     N = Np1 - 1
     m_tot = m.sum(axis=0)
+    if bkg_param[0] != -1:
+        m_tot += add_bkg_pot(r[0], bkg_param)
 
     # Compute residual of input profile
-    res_old = compute_he_resid_norm(r, rho, p, m)
+    res_old = compute_he_resid_norm(r, rho, p, m, bkg_param)
 
     # Backward sweep to update pressures
     p_new = p.copy()
@@ -403,6 +416,6 @@ def compute_he_pressures(r, rho, p, m):
         p_new[:, i] = p_new[:, i+1] + srho * dr * m_tot[i+1] / (4.0 * r[:, i+1]**2)
 
     # Compute residual of output profile
-    res_new = compute_he_resid_norm(r, rho, p_new, m)
+    res_new = compute_he_resid_norm(r, rho, p_new, m, bkg_param)
 
     return p_new, res_old, res_new

@@ -1,28 +1,19 @@
-# Table to convert from string to code
-# Will be called in setparam
+import numpy as np
+from numba import njit, float64
 
-# Example mapper (Python-level only):
-def _to_bkg_code(bkg):
-    # Map user-friendly strings -> tiny ints; Numba never sees strings.
-    table = {"None": -1, "iso": 0, "nfw": 1}
-    if isinstance(bkg, str):
-        return np.int32(table[bkg])
-    # If caller passes an int already:
-    return np.int32(bkg)
-
-# For hydrostatic:
-# --- tiny Python dispatcher (not jitted) ---
-def compute_he_resid_norm(r, rho, p, m, bkg=None):
+@njit(float64[:](float64[:], float64, float64), fastmath=True, cache=True)
+def hernq_static(r, m_tot, r_s):
     """
-    bkg can be:
-      - None
-      - a string like "iso", "nfw", etc. (converted to code here)
-      - or already an int code / parameter array
-    """
-    if bkg is None:
-        return _compute_he_resid_norm_no_bkg(r, rho, p, m)
-    # convert strings to a small int code (or a small parameter array)
-    bkg_code = _to_bkg_code(bkg)  # pure Python; returns int32 or small tuple/array
-    return _compute_he_resid_norm_with_bkg(r, rho, p, m, bkg_code)
+    Static Hernquist profile.
 
-# Hernquist profile
+    Arguments
+    ---------
+    r : ndarray
+    m_tot : float
+    r_s : float
+
+    Returns
+    -------
+    ndarray
+    """
+    return m_tot * r**2 / (r + r_s)**2

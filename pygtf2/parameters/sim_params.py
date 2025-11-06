@@ -19,6 +19,9 @@ class SimParams:
     bkg : str
         String representing the background potential. So far implemented {None, 'hernq'}
     """
+    VALID_BKG_PROFILES = ('hernq_static', 'hernq_decay')
+    DEFAULT_BKG = {'prof': None, 'mass': None, 'length': None, 'other': None}
+
     def __init__(
             self, 
             t_halt : float = 1e3,
@@ -27,15 +30,15 @@ class SimParams:
             alpha : float = 1.217,
             beta : float = 1.0,
             b : float = 0.45,
-            bkg : str = None
+            bkg: dict | None = None,
     ):
         self._t_halt = None
-        self.rho_c_halt = rho_c_halt
+        self._rho_c_halt = None
         self._lnL_param = None
         self._alpha = None
         self._beta = None
         self._b = None
-        self._bkg = None
+        self._bkg = dict(self.DEFAULT_BKG)
 
         self.t_halt = t_halt
         self.rho_c_halt = rho_c_halt
@@ -43,7 +46,8 @@ class SimParams:
         self.alpha = alpha
         self.beta = beta
         self.b = b
-        self.bkg = bkg
+        if bkg is not None:
+            self.bkg = bkg
 
     @property
     def t_halt(self):
@@ -107,19 +111,41 @@ class SimParams:
 
     @property
     def bkg(self):
-        return self._bkg
+        return dict(self._bkg)
 
     @bkg.setter
     def bkg(self, value):
-        bkg_strings = ('hernq_static', 'hernq_decay')
         if value is None:
-            self._bkg = None
+            self._bkg = dict(self.DEFAULT_BKG)
             return
-        if not isinstance(value, str):
-            raise TypeError("bkg must be a string or None")
-        if value not in bkg_strings:
-            raise ValueError(f"bkg must be None or one of {bkg_strings}")
-        self._bkg = value
+
+        if not isinstance(value, dict):
+            raise TypeError("bkg must be a dict with keys 'prof','mass','length','other'")
+
+        expected_keys = {'prof', 'mass', 'length', 'other'}
+        if set(value.keys()) != expected_keys:
+            raise ValueError("bkg must contain exactly the keys: 'prof','mass','length','other'")
+
+        prof = value.get('prof')
+        if prof is not None:
+            if not isinstance(prof, str) or prof not in self.VALID_BKG_PROFILES:
+                raise ValueError(f"bkg['prof'] must be None or one of {self.VALID_BKG_PROFILES}")
+
+        validated = {'prof': prof}
+        for key in ('mass', 'length', 'other'):
+            val = value.get(key)
+            if val is None:
+                validated[key] = None
+            else:
+                try:
+                    fval = float(val)
+                except Exception:
+                    raise TypeError(f"bkg['{key}'] must be a positive float or None")
+                if fval <= 0:
+                    raise ValueError(f"bkg['{key}'] must be positive")
+                validated[key] = fval
+
+        self._bkg = validated
 
     def __repr__(self):
         attrs = [

@@ -1,27 +1,34 @@
 import numpy as np
 from numba import njit, types, float64
 from pygtf2.util.interpolate import sum_intensive_loglog_single
+from pygtf2.profiles.bkg_pot import hernq_static
 
-def add_bkg_pot(r, m, bkg):
+@njit(float64[:](float64[:], float64[:]), fastmath=True, cache=True)
+def add_bkg_pot(r, bkg_param):
     """
-    Add a background potential to the mass array.
+    Add a background potential to the enclosed-mass array.
 
-    Arguments
-    ---------
-    r : ndarray, shape (N+1,)
-        Edge radii
-    m : ndarray, shape (N+1,)
-        Enclosed mass at edge radii
-    bkg : str
-        Background potential selected
+    Parameters
+    ----------
+    r : array_like, shape (N+1,)
+        Edge radii.
+    bkg_param : sequence of length 4
+        Background parameters: (prof, m_par, r_par, x_par). Only prof==0 is implemented.
 
     Returns
     -------
-    m_tot : ndarray, shape (N+1,)
-        The original m array with the background potential added
+    m_add : ndarray, shape (N+1,)
+        The the background potential contribution to be added.
     """
+    prof = int(bkg_param[0])
+    m_par = bkg_param[1]
+    r_par = bkg_param[2]
+    x_par = bkg_param[3]
 
-    pass
+    if prof == 0:
+        m_add = hernq_static(r, m_par, r_par)
+
+    return m_add
 
 @njit(types.float64(types.float64[:, ::1], types.float64[:, ::1]), fastmath=True, cache=True)
 def calc_rho_c(rmid, rho):

@@ -130,6 +130,7 @@ def integrate_time_step(state, dt_prop, step_count):
     # Store state attributes for fast access in loop and to pass into njit functions
     prec = state.config.prec
     char  = state.char
+    bkg_param = state.bkg_param
 
     c1 = float(char.c1); c2 = float(char.c2)
     mrat = state.mrat
@@ -160,7 +161,7 @@ def integrate_time_step(state, dt_prop, step_count):
         p_cond, du_max, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, r_orig, dt_prop, eps_du, c1)
 
         ### Step 2: Reestablish hydrostatic equilibrium ###
-        status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m)
+        status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m, bkg_param)
         
         iter_dr = 0
         redo_conduct = False
@@ -185,7 +186,7 @@ def integrate_time_step(state, dt_prop, step_count):
                     print(f"step {step_count}")
                     raise RuntimeWarning(f"Step {step_count}: Max iterations exceeded for dr in revirialization step")
                 iter_dr += 1
-                status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_new, rho_new, p_new, m)
+                status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_new, rho_new, p_new, m, bkg_param)
                 continue # Check for shell crossing
 
             # Both criteria are met, break out of loop

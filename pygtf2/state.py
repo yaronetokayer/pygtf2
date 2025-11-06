@@ -359,7 +359,77 @@ class State:
         char.c2 = (np.sqrt(2.0) / 9.0) * sim.alpha * sim.beta * sim.b
 
         return char  # Store the CharParams object in config
-    
+
+    def _set_bkg_param(self):
+        """
+        Configure background potential parameters from self.config.sim.bkg.
+
+        Reads the background description stored in config.sim.bkg and encodes it into
+        a compact, fixed-size numpy array that can be passed efficiently to the rest
+        of the codebase.
+
+        Returns
+        -------
+        numpy.ndarray
+            - If a background potential is specified: a 1D numpy array (dtype float64)
+              of length 4 with the following entry meanings:
+            [0] : integer code identifying the background potential (0 = no background;
+                  positive values map to specific analytic profiles).
+            [1] : mass-like parameter for the profile (e.g. total mass, M_s).
+            [2] : length-scale parameter for the profile (e.g. scale radius a or r_s).
+            [3] : additional profile-dependent parameter (e.g. truncation radius,
+                  concentration, or shape parameter). Set to NaN if unused.
+
+        Notes
+        -----
+        - Units of the returned mass and length parameters match the units used elsewhere
+          in the simulation (as defined in the Config object).
+        - The integer code and the interpretation of elements [1]–[3] depend on the set
+          of background profile implementations supported by the project. Callers should
+          consult the profile implementations or the configuration documentation for the
+          exact mapping between codes and profile parameter meanings.
+        """
+        config = self.config
+        char = self.char
+        chatter = config.io.chatter
+        sim = config.sim
+        bkg = sim.bkg
+        if chatter:
+            print("Setting parameters for background potential...")
+
+        VALID_BKG_PROFILES = sim.VALID_BKG_PROFILES
+
+        bkg_param = np.zeros(4, dtype=np.float64)
+
+        prof = bkg['prof']
+
+        # Set the profile code
+        if prof is None:
+            bkg_param[0] = -1
+            if chatter:
+                print("\tNo background potential.")
+            return bkg_param
+
+        elif isinstance(prof, str):
+            try:
+                idx = VALID_BKG_PROFILES.index(prof)
+            except ValueError:
+                raise ValueError(f"Unknown background profile '{prof}'. Valid options: {VALID_BKG_PROFILES}")
+            bkg_param[0] = float(idx)
+
+        # Set additional params
+        bkg_param[1] = bkg['mass'] / char.m_s
+        bkg_param[2] = bkg['length'] / char.r_s
+
+        # Profile-specific parameters
+        if prof == 'hernq_decay':
+            bkg_param[3] = bkg['other']
+
+        if chatter:
+            print(f"\tSet background potential parameters for profile {prof}.")
+        
+        return bkg_param
+
     def _setup_grid(self):
         """
         Constructs the Lagrangian radial grid in log-space between rmin and rmax.
@@ -409,7 +479,7 @@ class State:
             - v2: Velocity dispersion squared in each shell
             - trelax: Relaxation time in each shell
         """
-        from pygtf2.profiles.profile_routines import menc, sigr
+        from pygtf2.profiles.profile_init_routines import menc, sigr
         config = self.config
         prec = config.prec
         spec = config.spec
@@ -489,6 +559,7 @@ class State:
         """
         from pygtf2.evolve.hydrostatic import revirialize_interp, compute_he_pressures
         chatter = self.config.io.chatter
+        bkg_param = self.bkg_param
 
         if chatter:
             print("Ensuring initial hydrostatic equilibrium...")
@@ -499,7 +570,7 @@ class State:
         m = self.m.astype(np.float64, copy=False)
 
         # Update pressure with backward sweep
-        p_out, res_old, res_new = compute_he_pressures(self.r, self.rho, self.p, m)
+        p_out, res_old, res_new = compute_he_pressures(self.r, self.rho, self.p, m, bkg_param)
         p_new[:,:] = p_out[:,:]
         if chatter:
             print(f"\tInitial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
@@ -509,7 +580,7 @@ class State:
         i = 0
         while True:
             i += 1
-            status, r_new, rho_new, p_new, dr_max_new, he_res = revirialize_interp(r_new, rho_new, p_new, m)
+            status, r_new, rho_new, p_new, dr_max_new, he_res = revirialize_interp(r_new, rho_new, p_new, m, bkg_param)
             
             if status == 'shell_crossing':
                 raise RuntimeError(f"Initial revir iter {i}: Shell crossing!")
@@ -543,6 +614,7 @@ class State:
         prec = config.prec
 
         self.r = self._setup_grid()
+        self.bkg_param = self._set_bkg_param()
         self._initialize_grid()
         self._ensure_hydrostatic_equilibrium()
 
