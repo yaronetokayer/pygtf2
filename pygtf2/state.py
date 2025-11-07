@@ -331,7 +331,11 @@ class State:
                 cvir = rvir / rs
 
             char.fc = float(fNFW(cvir))
-            char.m_s = mtot / char.fc / float(const.xhubble) 
+            char.m_s = mtot / char.fc / float(const.xhubble)
+        
+        elif profile in ['exp']:
+            char.r_s = float(rs)
+            char.m_s = float(mtot)
 
         #--- Set rho_s and v0 ---
         char.rho_s = char.m_s / ( 4.0 * np.pi * char.r_s**3 )
@@ -483,6 +487,7 @@ class State:
         spec = config.spec
         labels = self.labels
         frac = self.frac
+        bkg_param = self.bkg_param
         chatter = config.io.chatter
         if chatter:
             print("Initializing profiles...")
@@ -510,7 +515,7 @@ class State:
             m_base = menc(self.r[i, 1:], init, prec, 
                           chatter=chatter, pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp)
             m[i, 1:] = frac[i] * m_base                 # Scale by mass fraction
-            v2[i, :] = sigr(r_mid[i, :], init, prec,
+            v2[i, :] = sigr(r_mid[i, :], init, prec, bkg_param,
                             chatter=chatter, grid=config.grid, rcut=rcut, 
                             pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp)
 

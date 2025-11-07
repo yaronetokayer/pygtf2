@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.integrate import quad
+from pygtf2.util.calc import add_bkg_pot_scalar
 
 def fNFW(r):
     """
@@ -20,14 +21,16 @@ def fNFW(r):
 
     return np.log(1.0 + r) - r / (1.0 + r)
 
-def _nfw_velocity_integrand(x):
-    fac = np.log(1.0 + x) - x / (1.0 + x)
-    return fac / (x**3 * (1.0 + x)**2)
+def _nfw_velocity_integrand(x, bkg_param):
+    mfac = np.log(1.0 + x) - x / (1.0 + x)
+    if bkg_param[0] != -1:
+        mfac += add_bkg_pot_scalar(x, bkg_param)
+    return mfac / (x**3 * (1.0 + x)**2)
 
 def menc_nfw(r):
     return fNFW(r)
 
-def sigr_nfw(r, prec):
+def sigr_nfw(r, prec, bkg_param):
     """
     Velocity dispersion squared at radius r (in units of v0^2).
 
@@ -37,6 +40,8 @@ def sigr_nfw(r, prec):
         Radius in units of r_s.
     prec : PrecisionParams
         The simulation PrecisionParams object
+    bkg_param : np.ndarray
+        Parameters for background potential.
 
     Returns
     -------
@@ -51,7 +56,7 @@ def sigr_nfw(r, prec):
 
     for i, ri in enumerate(r):
         ri_f = float(ri)
-        integral, _ = quad(_nfw_velocity_integrand, ri_f, np.inf, epsabs=epsabs, epsrel=epsrel)
+        integral, _ = quad(_nfw_velocity_integrand, ri_f, np.inf, args=(bkg_param,), epsabs=epsabs, epsrel=epsrel)
         out[i] = ri * (1.0 + ri)**2 * integral
 
     return out if out.size > 1 else float(out[0])

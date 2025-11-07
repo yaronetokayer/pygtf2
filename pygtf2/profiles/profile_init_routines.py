@@ -38,11 +38,11 @@ def menc(r, init, prec, **kwargs):
     elif profile == "abg":
         return menc_abg(r, init, prec)
     elif profile == "exp":
-        return menc_abg(r)
+        return menc_exp(r)
     else:
         raise ValueError(f"Unsupported profile type: {profile}")
 
-def sigr(r, init, prec, **kwargs):
+def sigr(r, init, prec, bkg_param, **kwargs):
     """
     Compute radial velocity dispersion squared v^2(r).
 
@@ -54,6 +54,8 @@ def sigr(r, init, prec, **kwargs):
         The simulation PrecisionParams object
     init: InitParams
         Initial profile parameters object.
+    bkg_param : np.ndarray
+        Parameters for background potential.
 
     Returns
     -------
@@ -63,12 +65,12 @@ def sigr(r, init, prec, **kwargs):
     r = _as_f64(r)
     profile = init.prof
     if profile == "nfw":
-        return sigr_nfw(r, prec)
+        return sigr_nfw(r, prec, bkg_param)
     elif profile == "truncated_nfw":
-        return sigr_trunc(r, prec, **kwargs)
+        return sigr_trunc(r, prec, bkg_param, **kwargs)
     elif profile == "abg":
-        return sigr_abg(r, init, prec)
+        return sigr_abg(r, init, prec, bkg_param)
     elif profile == "exp":
-        return menc_exp(r, prec)
+        return sigr_exp(r, prec, bkg_param)
     else:
         raise ValueError(f"Unsupported profile type: {profile}")

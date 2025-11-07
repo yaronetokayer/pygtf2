@@ -2,6 +2,7 @@ import numpy as np
 from scipy.integrate import quad, solve_ivp
 from scipy.interpolate import interp1d
 from numba import njit
+from pygtf2.util.calc import add_bkg_pot
 
 @njit
 def df(e):
@@ -318,6 +319,7 @@ def generate_sigr_integrand_lookup(
         pot_rad,
         pot_interp,
         rho_interp,
+        bkg_param,
         n_points=1000
         ):
     """
@@ -340,6 +342,8 @@ def generate_sigr_integrand_lookup(
         Interpolated numerically integrated potential function.
     rho_interp : scipy interp1d
         Interpolated numerically integrated density function.
+    bkg_param : np.ndarray
+        Parameters for background potential.
     n_points : int
         Number of points to use in the lookup table.
 
@@ -363,6 +367,8 @@ def generate_sigr_integrand_lookup(
     menc = menc_trunc(
         rgrid, prec, chatter=False, pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp
         ).astype(np.float64, copy=False)
+    if bkg_param[0] != -1:
+        menc += add_bkg_pot(rgrid, bkg_param)
     integrand_vals = menc * density / rgrid**2
     
     f_interp = interp1d(rgrid, integrand_vals, bounds_error=False, fill_value=0.0)
@@ -372,6 +378,7 @@ def generate_sigr_integrand_lookup(
 def sigr_trunc(
         r,
         prec,
+        bkg_param,
         chatter=True,
         grid=None,
         rcut=None,
@@ -388,6 +395,8 @@ def sigr_trunc(
         Radius in units of r_s.
     prec : PrecisionParams
         The simulation PrecisionParams object.
+    bkg_param : np.ndarray
+        Parameters for background potential.
     chatter: bool
         Chatter flag.
     grid : GridParams
@@ -412,7 +421,7 @@ def sigr_trunc(
     out = np.empty(r.shape, dtype=np.float64)
 
     integrand = generate_sigr_integrand_lookup(
-        prec, grid, chatter, rcut, pot_rad, pot_interp, rho_interp
+        prec, grid, chatter, rcut, pot_rad, pot_interp, rho_interp, bkg_param
         )
 
     for i, ri in enumerate(r):

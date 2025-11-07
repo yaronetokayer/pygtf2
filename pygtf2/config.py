@@ -171,7 +171,7 @@ class Config:
             spn = norm(sp)  # strip leading underscores on m_part/frac/init, etc.
             # init block
             init_block = norm(spn.get("init", {}))
-            profile = init_block.pop("profile", "nfw")
+            profile = init_block.pop("prof", "nfw")
             init_obj = make_init_params(profile, **init_block)
 
             m_part = float(spn["m_part"])

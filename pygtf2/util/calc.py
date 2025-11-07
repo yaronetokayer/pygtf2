@@ -23,12 +23,23 @@ def add_bkg_pot(r, bkg_param):
     prof = int(bkg_param[0])
     m_par = bkg_param[1]
     r_par = bkg_param[2]
-    x_par = bkg_param[3]
+    # x_par = bkg_param[3] For future profiles
 
     if prof == 0:
         m_add = hernq_static(r, m_par, r_par)
 
+    else:
+        m_add = np.zeros(r.shape, dtype=np.float64)
+    
     return m_add
+
+@njit(float64(float64, float64[:]), fastmath=True, cache=True)
+def add_bkg_pot_scalar(r, bkg_param):
+    """
+    Calls add_bkg_pot on a scalar value
+    """
+    r_arr = np.array([r], dtype=np.float64)
+    return add_bkg_pot(r_arr, bkg_param)[0]
 
 @njit(types.float64(types.float64[:, ::1], types.float64[:, ::1]), fastmath=True, cache=True)
 def calc_rho_c(rmid, rho):

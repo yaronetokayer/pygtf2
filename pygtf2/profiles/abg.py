@@ -1,5 +1,6 @@
 from scipy.integrate import quad
 import numpy as np
+from pygtf2.util.calc import add_bkg_pot_scalar
 
 def chi(prec, init):
     """
@@ -36,13 +37,15 @@ def _abg_jeans_mass_integrand(x, alpha, beta, gamma):
     """
     return x**(2.0 - gamma) / (1.0 + x**alpha)**((beta - gamma) / alpha)
 
-def _abg_velocity_integrand(x, alpha, beta, gamma, epsabs, epsrel):
+def _abg_velocity_integrand(x, alpha, beta, gamma, epsabs, epsrel, bkg_param):
     """
     Integrand for the velocity dispersion from the Jeans equation.
     """
     chi_integrand = lambda y: y**(2.0 - gamma) / (1.0 + y**alpha)**((beta - gamma) / alpha)
     chi_x, _ = quad(chi_integrand, 0.0, float(x), epsabs=epsabs, epsrel=epsrel)
     rho_x = x**(-gamma) / (1.0 + x**alpha)**((beta - gamma) / alpha)
+    if bkg_param[0] != -1:
+        chi_x += add_bkg_pot_scalar(x, bkg_param)
     return rho_x * chi_x / x**2
 
 def menc_abg(r, init, prec):
@@ -79,7 +82,7 @@ def menc_abg(r, init, prec):
 
     return out if out.size > 1 else float(out[0])
 
-def sigr_abg(r, init, prec):
+def sigr_abg(r, init, prec, bkg_param):
     """
     Velocity dispersion squared for alpha-beta-gamma profile at radius r.
 
@@ -91,6 +94,8 @@ def sigr_abg(r, init, prec):
         Initial profile parameters object.
     prec : PrecisionParams
         The simulation PrecisionParams object.
+    bkg_param : np.ndarray
+        Parameters for background potential.
 
     Returns
     -------
@@ -108,7 +113,7 @@ def sigr_abg(r, init, prec):
     out = np.empty(r.shape, dtype=np.float64)
 
     for i, ri in enumerate(r):
-        integrand = lambda x: _abg_velocity_integrand(x, alpha, beta, gamma, epsabs, epsrel)
+        integrand = lambda x: _abg_velocity_integrand(x, alpha, beta, gamma, epsabs, epsrel, bkg_param=bkg_param)
         integral, _ = quad(integrand, float(ri), np.inf, epsabs=epsabs, epsrel=epsrel)
         rho_ri = ri**(-gamma) / (1.0 + ri**alpha)**((beta - gamma) / alpha)
         out[i] = integral / rho_ri
