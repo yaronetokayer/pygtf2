@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='pygtf2',
-    version='1.0.0a1',
+    version='1.0.0',
     author='Yarone Tokayer',
     description='A Python implementation of a multi-species gravothermal fluid code',
     long_description=open('README.md').read(),
