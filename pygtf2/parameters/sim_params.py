@@ -24,7 +24,7 @@ class SimParams:
 
     def __init__(
             self, 
-            t_halt : float = 20.0,
+            t_halt : float = 1000.0,
             rho_c_halt : float = 1500,
             lnL_param : float = 0.11,
             alpha : float = 1.217,

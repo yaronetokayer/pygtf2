@@ -108,13 +108,6 @@ def write_log_entry(state, start_step):
     if ( step - start_step ) % nlog != 0:
         nlog = ( step - start_step ) % nlog
 
-    r_50 = np.zeros(s)
-    for k in range(s):
-        r_50[k] = np.asarray(
-            mass_fraction_radii(state.r[k], state.m[k], np.array([0.5])),
-            dtype=np.float64,
-        )[0]
-
     # Build header (base columns up to <du lim>)
     header_cols = [
         f"{'step':>10}",
@@ -125,18 +118,10 @@ def write_log_entry(state, start_step):
         f"{'<dt lim>':>8}",
         f"{'<dr lim>':>8}",
         f"{'<du lim>':>8}",
-    ]
-
-    # Add per-species r_50 columns (use spec_names order)
-    spec_list = list(spec_names)
-    for name in spec_list:
-        header_cols.append(f"{'r50['+name+']':>11}")
-
-    # Now add the n_iter columns after the r50 cols
-    header_cols.extend([
+        f"{'r50_spread':>10}",
         f"{'<n_it_cr>':>9}",
         f"{'<n_it_dr>':>9}",
-    ])
+    ]
 
     header = "  ".join(header_cols) + "\n"
 
@@ -152,15 +137,10 @@ def write_log_entry(state, start_step):
             f"{'N/A':>8}",                  # <dt lim>
             f"{'N/A':>8}",                  # <dr lim>
             f"{'N/A':>8}",                  # <du lim>
+            f"{state.r50_spread:10.4e}",
+            f"{'N/A':>9}",
+            f"{'N/A':>9}"
         ]
-
-        # Append per-species r_50 values
-        for k in range(s):
-            row.append(f"{r_50[k]:11.4e}")
-
-        # Append N/A for iter counts
-        row.append(f"{'N/A':>9}")
-        row.append(f"{'N/A':>9}")
 
     else:
         # Normal numeric row
@@ -173,15 +153,10 @@ def write_log_entry(state, start_step):
             f"{state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}",
             f"{state.dr_max_cum / prec.eps_dr / nlog:8.2e}",
             f"{state.du_max_cum / prec.eps_du / nlog:8.2e}",
+            f"{state.r50_spread:10.4e}",
+            f"{state.n_iter_cr / nlog:9.3e}",
+            f"{state.n_iter_dr / nlog:9.3e}"
         ]
-
-        # Append per-species r_50 values
-        for k in range(s):
-            row.append(f"{r_50[k]: 11.4e}")
-
-        # Append iter counts after r50 columns
-        row.append(f"{state.n_iter_cr / nlog:9.3e}")
-        row.append(f"{state.n_iter_dr / nlog:9.3e}")
 
     new_line = "  ".join(row) + "\n"
 

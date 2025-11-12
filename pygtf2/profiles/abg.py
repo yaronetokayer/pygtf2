@@ -75,10 +75,14 @@ def menc_abg(r, init, prec):
     r = np.asarray(r, dtype=np.float64)
     out = np.empty(r.shape, dtype=np.float64)
 
+    chi_param = chi(prec, init)
+
     for i, ri in enumerate(r):
         integral, _ = quad(_abg_jeans_mass_integrand, 0.0, float(ri), 
                            args=(alpha, beta, gamma), epsabs=epsabs, epsrel=epsrel)
         out[i] = integral
+
+    out /= chi_param # Normalize
 
     return out if out.size > 1 else float(out[0])
 
@@ -112,10 +116,14 @@ def sigr_abg(r, init, prec, bkg_param):
     r = np.asarray(r, dtype=np.float64)
     out = np.empty(r.shape, dtype=np.float64)
 
+    chi_param = chi(prec, init)
+
     for i, ri in enumerate(r):
         integrand = lambda x: _abg_velocity_integrand(x, alpha, beta, gamma, epsabs, epsrel, bkg_param=bkg_param)
         integral, _ = quad(integrand, float(ri), np.inf, epsabs=epsabs, epsrel=epsrel)
         rho_ri = ri**(-gamma) / (1.0 + ri**alpha)**((beta - gamma) / alpha)
         out[i] = integral / rho_ri
+
+    out /= chi_param
 
     return out if out.size > 1 else float(out[0])

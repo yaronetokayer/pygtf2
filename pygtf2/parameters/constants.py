@@ -7,7 +7,7 @@ class Constants:
     """
 
     # Gravitational constant in (M_sun^-1 Mpc (km/s)^2)
-    gee = 4.2994e-9
+    gee = 4.2994e-6
 
     # Conversion of megaparsec to centimeters
     Mpc_to_cm = 3.086e24

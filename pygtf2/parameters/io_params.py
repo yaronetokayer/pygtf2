@@ -30,7 +30,8 @@ class IOParams:
                  base_dir: str = None, 
                  nlog: int = 100000,
                  drho_prof : float = 0.1,
-                 drho_tevol : float = 0.01,
+                 drho_tevol : float = 0.05,
+                 dr50_tevol : float = 0.1,
                  overwrite: bool = True,
                  chatter: bool = True,
                  ):
@@ -39,6 +40,7 @@ class IOParams:
         self._nlog = nlog
         self._drho_prof = drho_prof
         self._drho_tevol = drho_tevol
+        self._dr50_tevol = dr50_tevol
         self._overwrite = None
         self._chatter = None
 
@@ -48,6 +50,7 @@ class IOParams:
         self.nlog = nlog
         self.drho_prof = drho_prof
         self.drho_tevol = drho_tevol
+        self.dr50_tevol = dr50_tevol
         self.overwrite = overwrite
         self.chatter = chatter
 
@@ -126,6 +129,18 @@ class IOParams:
         if value <= 0:
             raise ValueError("drho_tevol must be positive")
         self._drho_tevol = float(value)
+
+    @property
+    def dr50_tevol(self):
+        return self._dr50_tevol
+    
+    @dr50_tevol.setter
+    def dr50_tevol(self, value):
+        if not isinstance(value, (int, float)):
+            raise TypeError("dr50_tevol must be a number")
+        if value <= 0:
+            raise ValueError("dr50_tevol must be positive")
+        self._dr50_tevol = float(value)
 
     @property
     def overwrite(self):

@@ -57,7 +57,7 @@ def revirialize_interp(r, rho, p, m, bkg_param) -> tuple[str, np.ndarray | None,
         m_totk = interp_m_enc(k, r_copy, m)
         if add_bkg_flag:
             m_totk += add_bkg_pot(r[k], bkg_param)
-        a, b, c, y = build_tridiag_system_log(r[k], rho[k], p[k], m_totk)
+        a, b, c, y = build_tridiag_system(r[k], rho[k], p[k], m_totk)
         xk = solve_tridiagonal_thomas(a, b, c, y)
         dr_max = max(dr_max, float(np.max(np.abs(xk))))
         rk, pk, rhok = _update_r_p_rho(r[k], xk, p[k], rho[k])
@@ -65,12 +65,15 @@ def revirialize_interp(r, rho, p, m, bkg_param) -> tuple[str, np.ndarray | None,
         # r_new[k]   = rk
         p_new[k]   = pk
         rho_new[k] = rhok
+        # print('species', k)
+        # for i in range(len(a)):
+        #     print(a[i], b[i], c[i], y[i])
 
     if np.any((r_copy[:,1:] - r_copy[:,:-1]) <= 0.0):
         return 'shell_crossing', r_copy, None, None, dr_max, None
 
-    # he_res = compute_he_resid_norm(r_copy, rho_new, p_new, m)
-    he_res = 1.0
+    he_res = compute_he_resid_norm(r_copy, rho_new, p_new, m, bkg_param)
+    # he_res = 1.0
 
     return 'ok', r_copy, rho_new, p_new, dr_max, he_res
 
@@ -200,14 +203,14 @@ def build_tridiag_system(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.n
     b = -2.0 - r3b * c1 - r3c * c2                  # Main diagonal, except first element
     c = r3a * c1 + q1                               # Superdiagonal
 
-    # Enforce dp/dr = 0 for i=1
-    den1 = rR3[0] - rC3[0]   # Δ(r^3)_1
-    den0 = rC3[0] - rL3[0]   # Δ(r^3)_0
+    # Enforce dp/dr = 0 for i=1 - seems to work either way
+    # den1 = rR3[0] - rC3[0]   # Δ(r^3)_1
+    # den0 = rC3[0] - rL3[0]   # Δ(r^3)_0
 
-    a[0] = 0.0
-    b[0] = 5.0 * rC3[0] * ( p[1] / den1 + p[0] / den0 )
-    c[0] = -5.0 * p[1] * (rR3[0] / den1)   # note: rC3[1] == rR3[0]
-    y[0] = -(p[1] - p[0])
+    # a[0] = 0.0
+    # b[0] = 5.0 * rC3[0] * ( p[1] / den1 + p[0] / den0 )
+    # c[0] = -5.0 * p[1] * (rR3[0] / den1)   # note: rC3[1] == rR3[0]
+    # y[0] = -(p[1] - p[0])
 
     return a, b, c, y
 

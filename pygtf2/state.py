@@ -133,7 +133,7 @@ class State:
         # --- imports
         from pygtf2.io.read import import_metadata, load_snapshot_bundle
         from pygtf2.config import Config
-        from pygtf2.util.calc import calc_rho_c
+        from pygtf2.util.calc import calc_rho_c, calc_r50_spread
 
         # --- metadata + snapshot
         meta = import_metadata(p)
@@ -202,6 +202,7 @@ class State:
         state.maxvel     = float(np.sqrt(np.max(state.v2)))
         state.mintrelax  = float(np.min(state.trelax))
         state.rho_c      = calc_rho_c(state.rmid, state.rho)
+        state.r50_spread = calc_r50_spread(state.r, state.m)
 
         # running diagnostics
         state.n_iter_cr = 0
@@ -611,13 +612,13 @@ class State:
         self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
 
         if chatter:
-            print(f"\tHydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}")
+            print(f"\tHydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}.  HE res {he_res}")
 
     def reset(self):
         """
         Resets initial state
         """
-        from pygtf2.util.calc import calc_rho_c
+        from pygtf2.util.calc import calc_rho_c, calc_r50_spread
 
         config = self.config
         prec = config.prec
@@ -637,6 +638,7 @@ class State:
         self.maxvel     = float(np.sqrt(np.max(self.v2)))
         self.mintrelax  = float(np.min(self.trelax))
         self.rho_c      = calc_rho_c(self.rmid, self.rho)
+        self.r50_spread = calc_r50_spread(self.r, self.m)
 
         # For diagnostics
         self.n_iter_cr = 0

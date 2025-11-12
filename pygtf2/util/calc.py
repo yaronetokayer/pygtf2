@@ -3,6 +3,7 @@ from numba import njit, types, float64
 from pygtf2.util.interpolate import sum_intensive_loglog_single
 from pygtf2.profiles.bkg_pot import hernq_static
 
+
 @njit(float64[:](float64[:], float64[:]), fastmath=True, cache=True)
 def add_bkg_pot(r, bkg_param):
     """
@@ -132,3 +133,26 @@ def mass_fraction_radii(r_edges, m_edges, fracs):
             t = 0.0 if m1 == m0 else (mt - m0) / (m1 - m0)
             out[i] = r0 + t * (r1 - r0)
     return out
+
+@njit(float64(float64[:, :], float64[:, :]), fastmath=True, cache=True)
+def calc_r50_spread(r, m):
+    """
+    Compute a simple segregation metric:
+        spread = (max(r50) - min(r50)) / mean(r50)
+    r : array-like, shape (n_species, ...)
+        Radii arrays per species
+    m : array-like, shape (n_species, ...)
+        Mass arrays per species
+    Returns
+    -------
+    spread : float
+        Dimensionless measure of segregation (0 = none)
+    """
+    s, _ = r.shape
+    r_50 = np.empty(s, dtype=np.float64)
+    frac = np.array([0.5])
+
+    for k in range(s):
+        r_50[k] = mass_fraction_radii(r[k], m[k], frac)[0]
+
+    return (r_50.max() - r_50.min()) / r_50.mean()

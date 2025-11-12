@@ -2,7 +2,7 @@ import numpy as np
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 from pygtf2.evolve.transport import compute_luminosities, conduct_heat
 from pygtf2.evolve.hydrostatic import revirialize_interp, compute_mass
-from pygtf2.util.calc import calc_rho_c
+from pygtf2.util.calc import calc_rho_c, calc_r50_spread
 
 def run_until_stop(state, start_step, **kwargs):
     """
@@ -22,9 +22,16 @@ def run_until_stop(state, start_step, **kwargs):
     t_halt = float(sim.t_halt)
     rho0_last_prof = float(state.rho_c)
     rho0_last_tevol = float(state.rho_c)
+    r50_spread_last_tevol = float(state.r50_spread)
     rho_c_halt = float(sim.rho_c_halt)
     drho_prof = float(io.drho_prof)
     drho_tevol = float(io.drho_tevol)
+    mrat = state.mrat
+    if np.allclose(mrat, mrat[0]):
+        use_r50 = False
+    else:
+        dr50_tevol = float(io.dr50_tevol)
+        use_r50 = True
     nlog = int(io.nlog)
 
     while state.t < t_halt:
@@ -43,6 +50,7 @@ def run_until_stop(state, start_step, **kwargs):
             print(f"Completed step {step_count}", end='\r', flush=True)
 
         rho0 = state.rho_c
+        r50_spread = state.r50_spread
 
         # Check halting criteria
         if rho0 > rho_c_halt:
@@ -73,9 +81,14 @@ def run_until_stop(state, start_step, **kwargs):
             write_profile_snapshot(state)
 
         # Track time evolution 
-        drho_for_tevol = np.abs(rho0 - rho0_last_tevol) / rho0_last_tevol
-        if drho_for_tevol > drho_tevol:
-            rho0_last_tevol = rho0
+        # drho_for_tevol = np.abs(rho0 - rho0_last_tevol) / rho0_last_tevol
+        # if use_r50:
+        #     r50_spread_for_tevol = np.abs(r50_spread - r50_spread_last_tevol) / max(abs(r50_spread_last_tevol), 1e-100)
+        # if drho_for_tevol > drho_tevol or (use_r50 and r50_spread_for_tevol > dr50_tevol):
+        #     rho0_last_tevol = rho0
+        #     r50_spread_last_tevol = r50_spread
+        #     write_time_evolution(state)
+        if step_count % 100000 == 0:
             write_time_evolution(state)
 
         # Log
@@ -215,7 +228,8 @@ def integrate_time_step(state, dt_prop, step_count):
 
     state.maxvel    = float(np.max(sqrt_v2_new))
     state.mintrelax = float(np.min(state.trelax))
-    state.rho_c = calc_rho_c(rmid, rho_new)
+    state.rho_c     = calc_rho_c(rmid, rho_new)
+    state.r50_spread = calc_r50_spread(r_new, m)
 
     # Diagnostics
     state.n_iter_cr += iter_cr
