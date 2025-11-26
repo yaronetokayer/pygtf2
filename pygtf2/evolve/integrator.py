@@ -1,21 +1,26 @@
 import numpy as np
+from collections import deque
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 from pygtf2.evolve.transport import compute_luminosities, conduct_heat
-from pygtf2.evolve.hydrostatic import revirialize_interp, compute_mass
+from pygtf2.evolve.hydrostatic import revirialize_interp
 from pygtf2.util.calc import calc_rho_c, calc_r50_spread
 
 def run_until_stop(state, start_step, **kwargs):
     """
     Repeatedly step forward until t >= t_halt or halting criterion met.
     """
-    # User halting criteria
+    ##################
+    ### Set locals ###
+    ##################
+
+    # --- User halting criteria ---
     steps = kwargs.get('steps', None)
     time_limit = kwargs.get('stoptime', None)
     rho_c_limit = kwargs.get('rho_c', None)
     step_i = state.step_count if steps is not None else None
     time_i = state.t if time_limit is not None else None
 
-    # Locals for speed + type hardening
+    # --- Locals for speed + type hardening ---
     io = state.config.io
     sim = state.config.sim
     chatter = bool(io.chatter)
@@ -33,8 +38,43 @@ def run_until_stop(state, start_step, **kwargs):
         dr50_tevol = float(io.dr50_tevol)
         use_r50 = True
     nlog = int(io.nlog)
+    nupdate = int(io.nupdate)
+
+    # --- oscillation detection and throttling ---
+    osc_window = 5
+    osc_threshold_on  = 100     # avg spacing < 100 steps → oscillation detected
+    osc_threshold_off = 10_000     # avg spacing > 10k steps → stable again
+
+    min_prof_spacing = 1_000_000
+    min_tevol_spacing = 100_000
+
+    prof_desired_steps = deque(maxlen=osc_window)       # double-ended queue
+    tevol_desired_steps = deque(maxlen=osc_window)
+
+    prof_last_write = None
+    tevol_last_write = None
+
+    avg_spacing_prof = float('inf')
+    avg_spacing_tevol = float('inf')
+
+    prof_force_min = False
+    tevol_force_min = False
+
+    def detect_avg_spacing(dq):
+        if len(dq) < osc_window:
+            return float('inf')
+        spacings = [dq[i+1] - dq[i] for i in range(len(dq)-1)]
+        return sum(spacings) / len(spacings)
+
+    #################
+    ### Main loop ###
+    #################
 
     while state.t < t_halt:
+
+        ###########################
+        ### 1. Integrate system ###
+        ###########################
 
         # Increment counter
         state.step_count += 1
@@ -46,13 +86,17 @@ def run_until_stop(state, start_step, **kwargs):
         # Integrate time step
         integrate_time_step(state, dt_prop, step_count)
 
-        if step_count % 1000 == 0:
+        if step_count % nupdate == 0:
             print(f"Completed step {step_count}", end='\r', flush=True)
 
         rho0 = state.rho_c
         r50_spread = state.r50_spread
 
-        # Check halting criteria
+        ###########################
+        ### 2. Halting criteria ###
+        ###########################
+
+        # Hardcoded criteria
         if rho0 > rho_c_halt:
             if step_count > 5e5:
                 if chatter:
@@ -73,25 +117,93 @@ def run_until_stop(state, start_step, **kwargs):
                 print("Simulation halted: user stopping condition reached")
             break
 
-        # Check I/O criteria
-        # Write profile to disk
-        drho_for_prof = np.abs(rho0 - rho0_last_prof) / rho0_last_prof
-        if drho_for_prof > drho_prof:
-            rho0_last_prof = rho0
-            write_profile_snapshot(state)
+        #########################
+        ### 3. Output to disk ###
+        #########################
 
-        # Track time evolution 
-        # drho_for_tevol = np.abs(rho0 - rho0_last_tevol) / rho0_last_tevol
-        # if use_r50:
-        #     r50_spread_for_tevol = np.abs(r50_spread - r50_spread_last_tevol) / max(abs(r50_spread_last_tevol), 1e-100)
-        # if drho_for_tevol > drho_tevol or (use_r50 and r50_spread_for_tevol > dr50_tevol):
-        #     rho0_last_tevol = rho0
-        #     r50_spread_last_tevol = r50_spread
-        #     write_time_evolution(state)
-        if step_count % 100000 == 0:
-            write_time_evolution(state)
+        # --- PROFILE OUTPUT ---
+        drho_for_prof = abs((rho0 / rho0_last_prof) - 1.0)
 
-        # Log
+        # Update desired spacing if criteria satisfied
+        want_prof = (drho_for_prof > drho_prof)
+        if want_prof:
+            prof_desired_steps.append(step_count)
+            avg_spacing_prof = detect_avg_spacing(prof_desired_steps)
+
+        # Auto de-throttle (re-enable normal criteria)
+        if prof_force_min and avg_spacing_prof > osc_threshold_off:
+            if chatter:
+                print(f"{step_count}: Profile output throttling disabled (system stabilized)")
+            prof_force_min = False
+
+        if prof_force_min:
+            # Throttled mode
+            if prof_last_write is None or (step_count - prof_last_write >= min_prof_spacing):
+                rho0_last_prof = rho0
+                prof_last_write = step_count
+                write_profile_snapshot(state)
+
+        else:
+            # Normal mode
+            if want_prof:
+                rho0_last_prof = rho0
+                prof_last_write = step_count
+                write_profile_snapshot(state)
+
+                # Detect oscillation
+                if avg_spacing_prof < osc_threshold_on:
+                    if step_count > osc_threshold_off:
+                        if chatter:
+                            print(f"{step_count}: Profile outputs too rapid — enabling throttling")
+                        prof_force_min = True
+
+        # --- TIME EVOLUTION OUTPUT ---
+        drho_for_tevol = abs((rho0 / rho0_last_tevol) - 1.0)
+        want_tevol = drho_for_tevol > drho_tevol
+
+        if use_r50:
+            denom = r50_spread_last_tevol if abs(r50_spread_last_tevol) > 1e-100 else 1e-100
+            r50_spread_for_tevol = abs((r50_spread - r50_spread_last_tevol) / denom)
+            if r50_spread_for_tevol > dr50_tevol:
+                want_tevol = True
+
+        # Update desired spacing if criteria satisfied
+        if want_tevol:
+            tevol_desired_steps.append(step_count)
+            avg_spacing_tevol = detect_avg_spacing(tevol_desired_steps)
+        
+        # Auto de-throttle
+        if tevol_force_min and avg_spacing_tevol > osc_threshold_off:
+            if chatter:
+                print(f"{step_count}: Time evolution output throttling disabled (system stabilized)")
+            tevol_force_min = False
+
+        if tevol_force_min:     # Throttled mode
+            if tevol_last_write is None or (step_count - tevol_last_write >= min_tevol_spacing):
+                rho0_last_tevol = rho0
+                r50_spread_last_tevol = r50_spread
+                tevol_last_write = step_count
+                write_time_evolution(state)
+
+        else:
+            # Normal mode
+            if want_tevol:
+                rho0_last_tevol = rho0
+                r50_spread_last_tevol = r50_spread
+                tevol_last_write = step_count
+                write_time_evolution(state)
+
+                # Detect oscillation
+                if avg_spacing_tevol < osc_threshold_on:
+                    if step_count > osc_threshold_off:
+                        if chatter:
+                            print(f"{step_count}: Time evolution outputs too rapid — enabling throttling")
+                        tevol_force_min = True
+
+        ##############
+        ### 4. Log ###
+        ##############
+
         if step_count % nlog == 0:
             write_log_entry(state, start_step)
 
@@ -158,57 +270,16 @@ def integrate_time_step(state, dt_prop, step_count):
     lum = compute_luminosities(c2, r_orig, u_orig, rho_orig, mrat, lnL)
 
     eps_du = float(prec.eps_du)
-    eps_dr = float(prec.eps_dr)
-    max_iter_cr = prec.max_iter_cr
-    max_iter_dr = prec.max_iter_dr
 
-    # Compute total enclosed mass including baryons, perturbers, etc.
-    # May need to move into loop depending on how m is updated
-    # Current version just returns m as is
-    # m_tot = compute_mass(m)
+    ### Step 1: Energy transport ###
+    p_cond, du_max, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, r_orig, dt_prop, eps_du, c1)
 
-    iter_cr = 0
-    while True:
-
-        ### Step 1: Energy transport ###
-        p_cond, du_max, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, r_orig, dt_prop, eps_du, c1)
-
-        ### Step 2: Reestablish hydrostatic equilibrium ###
-        status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m, bkg_param)
+    ### Step 2: Reestablish hydrostatic equilibrium ###
+    status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m, bkg_param)
         
-        iter_dr = 0
-        redo_conduct = False
-
-        while True:
-            # Shell crossing
-            if status == 'shell_crossing':
-                if iter_cr >= max_iter_cr:
-                    raise RuntimeError(f"Step {step_count}: Max iterations exceeded for shell crossing in conduction/revirialization step")
-                dt_prop *= 0.5
-                iter_cr += 1
-                redo_conduct = True
-                break # Redo conduct_heat with original values and smaller dt
-
-            # Check dr criterion
-            """
-            With new step to ensure equilibrium in initialization, no longer a need to accept larger dr in first time step.
-            If needed, can reintroduce with 'and (step_count != 1):' in the if statement below.
-            """
-            if dr_max > eps_dr:
-                if iter_dr >= max_iter_dr:
-                    print(f"step {step_count}")
-                    raise RuntimeWarning(f"Step {step_count}: Max iterations exceeded for dr in revirialization step")
-                iter_dr += 1
-                status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_new, rho_new, p_new, m, bkg_param)
-                continue # Check for shell crossing
-
-            # Both criteria are met, break out of loop
-            break
-
-        if redo_conduct:
-            continue
-
-        break
+    # Shell crossing
+    if status == 'shell_crossing':
+        raise RuntimeError(f"Step {step_count}: Shell crossing in conduction/revirialization step")
 
     ### Step 3: Update state variables ###
 
@@ -217,7 +288,6 @@ def integrate_time_step(state, dt_prop, step_count):
     state.p = p_new
     v2_new = p_new / rho_new
     state.v2 = v2_new
-    state.dr_max = dr_max
     state.du_max = du_max
 
     rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
@@ -232,10 +302,7 @@ def integrate_time_step(state, dt_prop, step_count):
     state.r50_spread = calc_r50_spread(r_new, m)
 
     # Diagnostics
-    state.n_iter_cr += iter_cr
-    state.n_iter_dr += iter_dr
     state.dt_cum += float(dt_prop)
-    state.dr_max_cum += float(dr_max)
     state.du_max_cum += float(du_max)
     state.dt_over_trelax_cum += float(dt_prop / state.mintrelax)
 

@@ -84,7 +84,7 @@ def generate_rho_lookup(init, prec, chatter, n_points=10000, phi_min=1e-7):
     n_points : int, optional
         Number of points used to generate the interpolated function.
     phi_min : float, optional
-        Maximum potential value to consider.
+        Minimum potential value to consider.
 
     Returns
     -------
@@ -183,7 +183,7 @@ def integrate_potential(init, grid, chatter, rho_interp):
 
     # Step 3: Integrate until potential crosses zero
     while y[0] > 0.0:
-        # Only print if r has changed by at least 0.5 since last print
+        # Only print if r has changed by at least 1.5 since last print
         if chatter and (len(rad) == 1 or abs(r1 - r_last_print) >= 1.5):
                 print(f"\r{INDENT}Integrating Poisson equation outward: r = {r1:.6f}, phi = {y[0]:.6f}", end='', flush=True)
                 r_last_print = r1
@@ -261,7 +261,7 @@ def _density_times_r2_trunc(r, pot_rad, pot_interp, rho_interp):
 
     return density * r**2
 
-def menc_trunc(r, prec, chatter=True, pot_rad=None, pot_interp=None, rho_interp=None): 
+def menc_trunc(r, prec, chatter=True, pot_rad=None, pot_interp=None, rho_interp=None, **_): 
     """
     Enclosed mass for a truncated NFW profile computed via numerical integration.
 
@@ -385,6 +385,7 @@ def sigr_trunc(
         pot_rad=None,
         pot_interp=None,
         rho_interp=None,
+        **_,
         ):
     """ 
     v^2 profile for truncated NFW halo.

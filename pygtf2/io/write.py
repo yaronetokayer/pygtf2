@@ -99,8 +99,6 @@ def write_log_entry(state, start_step):
     config = state.config
     io = config.io
     prec = config.prec
-    s = config.s
-    spec_names = config.spec.keys()
     filepath = os.path.join(io.base_dir, io.model_dir, f"logfile.txt")
     chatter = io.chatter
     step = state.step_count
@@ -116,11 +114,8 @@ def write_log_entry(state, start_step):
         f"{'rho_c':>12}",
         f"{'v_max':>12}",
         f"{'<dt lim>':>8}",
-        f"{'<dr lim>':>8}",
         f"{'<du lim>':>8}",
         f"{'r50_spread':>10}",
-        f"{'<n_it_cr>':>9}",
-        f"{'<n_it_dr>':>9}",
     ]
 
     header = "  ".join(header_cols) + "\n"
@@ -135,11 +130,8 @@ def write_log_entry(state, start_step):
             f"{state.rho_c:12.6e}",
             f"{state.maxvel:12.6e}",
             f"{'N/A':>8}",                  # <dt lim>
-            f"{'N/A':>8}",                  # <dr lim>
             f"{'N/A':>8}",                  # <du lim>
-            f"{state.r50_spread:10.4e}",
-            f"{'N/A':>9}",
-            f"{'N/A':>9}"
+            f"{state.r50_spread:10.4e}"
         ]
 
     else:
@@ -151,22 +143,16 @@ def write_log_entry(state, start_step):
             f"{state.rho_c:12.6e}",
             f"{state.maxvel:12.6e}",
             f"{state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}",
-            f"{state.dr_max_cum / prec.eps_dr / nlog:8.2e}",
             f"{state.du_max_cum / prec.eps_du / nlog:8.2e}",
-            f"{state.r50_spread:10.4e}",
-            f"{state.n_iter_cr / nlog:9.3e}",
-            f"{state.n_iter_dr / nlog:9.3e}"
+            f"{state.r50_spread:10.4e}"
         ]
 
     new_line = "  ".join(row) + "\n"
 
     _update_file(filepath, header, new_line, step)
 
-    state.n_iter_cr = 0
-    state.n_iter_dr = 0
     state.dt_cum = 0.0
     state.du_max_cum = 0.0
-    state.dr_max_cum = 0.0
     state.dt_over_trelax_cum = 0.0
 
     if chatter:

@@ -82,6 +82,19 @@ class State:
                     init, config.grid, chatter, self.rho_interp[name]
                     )
                 first = False
+            if self.config.spec[name].init.prof == 'king':
+                print(f"Computing King potential for species {name}:")
+                from pygtf2.profiles.king import generate_nu_lookup, integrate_W_king
+                prec = config.prec
+                chatter = config.io.chatter
+                init = config.spec[name].init
+                if first:
+                    self.nu_interp, self.rcut, self.w_interp, self.pot_rad, self.pot = ({} for _ in range(5))
+                self.nu_interp[name] = generate_nu_lookup(init, prec, chatter)
+                self.rcut[name], config.grid.rmax, self.w_interp[name], self.pot_rad[name], self.pot[name] = integrate_W_king(
+                    init, config.grid, chatter, self.nu_interp[name]
+                    )
+                first = False
 
     @classmethod
     def from_config(cls, config):
@@ -196,7 +209,6 @@ class State:
         prec         = config.prec
         state.dt     = float(prec.eps_dt)
         state.du_max = float(prec.eps_du)
-        state.dr_max = float(prec.eps_dr)
 
         # quick diagnostics (global)
         state.maxvel     = float(np.sqrt(np.max(state.v2)))
@@ -205,10 +217,7 @@ class State:
         state.r50_spread = calc_r50_spread(state.r, state.m)
 
         # running diagnostics
-        state.n_iter_cr = 0
-        state.n_iter_dr = 0
         state.dt_cum = 0.0
-        state.dr_max_cum = 0.0
         state.du_max_cum = 0.0
         state.dt_over_trelax_cum = 0.0
 
@@ -334,7 +343,7 @@ class State:
             char.fc = float(fNFW(cvir))
             char.m_s = mtot / char.fc / float(const.xhubble)
         
-        elif profile in ['exp']:
+        elif profile in ['exp', 'king']:
             char.r_s = float(rs)
             char.m_s = float(mtot)
 
@@ -345,18 +354,13 @@ class State:
         #--- Set Coulomb logarithm and t0 --- 
         s = config.s
         m_part = self.m_part
-        prof_bkg = sim.bkg['prof']
-        if prof_bkg is not None:
-            m_bkg = sim.bkg['mass']
-        else:
-            m_bkg = 0.0
 
         lnL = np.empty((s,s), dtype=np.float64)
         for i in range(s):
             for j in range(s):
-                lnL[i,j] = np.log(sim.lnL_param * 2.0 * (char.m_s + m_bkg) / (m_part[i] + m_part[j]) )
+                lnL[i,j] = np.log(sim.lnL_param * 2.0 * char.m_s / (m_part[i] + m_part[j]) )
 
-        lnL_term = lnL[0,0] if s == 1 else lnL[0,s - 1]
+        lnL_term = lnL[0,s - 1]
 
         t0 = char.v0**3.0 / (12.0 * np.pi * const.gee**2.0 * m_part[kref] * char.rho_s * lnL_term)
         char.t0 = t0 * const.kpc_to_km * const.sec_to_Gyr
@@ -398,6 +402,8 @@ class State:
           consult the profile implementations or the configuration documentation for the
           exact mapping between codes and profile parameter meanings.
         """
+        from pygtf2.util.calc import add_bkg_pot_scalar
+
         config = self.config
         char = self.char
         chatter = config.io.chatter
@@ -431,8 +437,29 @@ class State:
         bkg_param[2] = bkg['length'] / char.r_s
 
         # Profile-specific parameters
-        if prof == 'hernq_decay':
+        if prof == 'hernq_decay': # Blank
             bkg_param[3] = bkg['other']
+
+        #--- Readjust lnL and t0
+        s = config.s
+        m_part = self.m_part
+        kref = int(np.argmax(self.m_part))
+
+        rmax = config.grid.rmax
+        # m_bkg_lnL = bkg['mass']
+        m_bkg_lnL = char.m_s * add_bkg_pot_scalar(rmax, bkg_param)
+
+        lnL = np.empty((s,s), dtype=np.float64)
+        for i in range(s):
+            for j in range(s):
+                lnL[i,j] = np.log(sim.lnL_param * 2.0 * (char.m_s + m_bkg_lnL) / (m_part[i] + m_part[j]) )
+
+        lnL_term = lnL[0,s - 1]
+
+        t0 = char.v0**3.0 / (12.0 * np.pi * const.gee**2.0 * m_part[kref] * char.rho_s * lnL_term)
+        
+        self.char.t0 = t0 * const.kpc_to_km * const.sec_to_Gyr
+        self.char.lnL = lnL / lnL_term
 
         if chatter:
             print(f"\tSet background potential parameters for profile {prof}.")
@@ -512,19 +539,22 @@ class State:
             init = spec[name].init
 
             # kwargs needed for non-analytic truncated NFW profile
-            pot_rad = pot_interp = rho_interp = rcut = None
+            kwargs = {}
             if init.prof == 'truncated_nfw':
-                pot_rad = self.pot_rad[name]
-                pot_interp = self.pot_interp[name]
-                rho_interp = self.rho_interp[name]
-                rcut = self.rcut[name]
-            
+                kwargs['pot_rad'] = self.pot_rad[name]
+                kwargs['pot_interp'] = self.pot_interp[name]
+                kwargs['rho_interp'] = self.rho_interp[name]
+                kwargs['rcut'] = self.rcut[name]
+            elif init.prof == 'king':
+                kwargs['rt'] = self.rcut[name]
+                kwargs['w_interp'] = self.w_interp[name]
+                kwargs['nu_interp'] = self.nu_interp[name]
+
             m_base = menc(self.r[i, 1:], init, prec, 
-                          chatter=chatter, pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp)
+                          chatter=chatter, **kwargs)
             m[i, 1:] = frac[i] * m_base                 # Scale by mass fraction
             v2[i, :] = sigr(r_mid[i, :], init, prec, bkg_param,
-                            chatter=chatter, grid=config.grid, rcut=rcut, 
-                            pot_rad=pot_rad, pot_interp=pot_interp, rho_interp=rho_interp)
+                            chatter=chatter, grid=config.grid, **kwargs)
 
         # Rho, u, and p from equation of state
         rho = 3.0 * ( m[:, 1:] - m[:, :-1] ) / dr3
@@ -586,7 +616,7 @@ class State:
             print(f"\tInitial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
 
         # Iterative revir
-        eps_dr = float(self.config.prec.eps_dr)
+        eps_dr = 1e-10
         i = 0
         while True:
             i += 1
@@ -633,7 +663,6 @@ class State:
         self.snapshot_index = 0             # Counts profile output snapshots
         self.dt = 1e-7                      # Initial time step (will be updated adaptively)
         self.du_max = prec.eps_du           # Initialize the max du to upper limit
-        self.dr_max = prec.eps_dr           # Initialize the max dr to upper limit
 
         self.maxvel     = float(np.sqrt(np.max(self.v2)))
         self.mintrelax  = float(np.min(self.trelax))
@@ -641,10 +670,7 @@ class State:
         self.r50_spread = calc_r50_spread(self.r, self.m)
 
         # For diagnostics
-        self.n_iter_cr = 0
-        self.n_iter_dr = 0
         self.dt_cum = 0.0
-        self.dr_max_cum = 0.0
         self.du_max_cum = 0.0
         self.dt_over_trelax_cum = 0.0
 

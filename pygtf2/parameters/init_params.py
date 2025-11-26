@@ -21,6 +21,10 @@ PROFILE_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "applicable": {"r_s", "z"},
         "defaults":   {"r_s": 1.0, "z": 0.0},
     },
+    "king": {
+        "applicable": {"r_s", "W0", "z"}, # r_s is core radius
+        "defaults":   {"r_s": 1.0, "W0": 5.0, "z": 0.0},
+    },
 }
 
 def _norm_prof(p: str) -> str:
@@ -54,6 +58,9 @@ class InitParams:
     alpha: Optional[float] = None
     beta: Optional[float] = None
     gamma: Optional[float] = None
+
+    # King profile
+    W0: Optional[float] = None
 
     # non-init field to accumulate soft notices if you want to inspect later
     notices: list[str] = field(default_factory=list, repr=False, compare=False)
@@ -150,12 +157,13 @@ class InitParams:
         _pos("r_s", self.r_s)
         _pos("Zt", self.Zt)
         _pos("deltaP", self.deltaP)
+        _pos("W0", self.W0)
         if self.z < 0:
             raise ValueError("z must be non-negative.")
 
     @staticmethod
     def _all_field_names():
-        return {"prof", "cvir", "r_s", "z", "Zt", "deltaP", "alpha", "beta", "gamma", "notices"}
+        return {"prof", "cvir", "r_s", "z", "Zt", "deltaP", "alpha", "beta", "gamma", "W0", "notices"}
 
     def __repr__(self):
         # Compact repr showing only relevant (applicable) fields for the current profile

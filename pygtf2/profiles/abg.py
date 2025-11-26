@@ -64,7 +64,7 @@ def menc_abg(r, init, prec):
     Returns
     -------
     M_enc : float or ndarray
-        Enclosed mass in units of Mvir.
+        Enclosed mass in units of Mtot.
     """
     alpha = float(init.alpha)
     beta  = float(init.beta)

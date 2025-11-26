@@ -6,14 +6,8 @@ class PrecisionParams:
     ----------
     eps_du : float
         Maximum allowed relative change in internal energy (u) per time step.
-    eps_dr : float
-        Maximum allowed relative change in radius per time step.
     eps_dt : float
         Epsilon factor for adjusting time step size.
-    max_iter_cr : int
-        Maximum iterations allowed for shell crossing re-virialization step convergence.
-    max_iter_dr : int
-        Maximum iterations allowed for re-virialization step convergence.
     epsabs : float
         Absolute tolerance for numerical integration routines.
     epsrel : float
@@ -23,26 +17,17 @@ class PrecisionParams:
     def __init__(
         self,
         eps_du : float = 1.0e-4,
-        eps_dr : float = 1.0e-3,
         eps_dt : float = 1.0e-3,
-        max_iter_cr : int = 10,
-        max_iter_dr : int = 100,
         epsabs : float = 1e-6,
         epsrel : float = 1e-6
     ):
         self._eps_du = None
-        self._eps_dr = None
         self._eps_dt = None
-        self._max_iter_cr = None
-        self._max_iter_dr = None
         self._epsabs = None
         self._epsrel = None
 
         self.eps_du = eps_du
-        self.eps_dr = eps_dr
         self.eps_dt = eps_dt
-        self.max_iter_cr = max_iter_cr
-        self.max_iter_dr = max_iter_dr
         self.epsabs = epsabs
         self.epsrel = epsrel
 
@@ -56,15 +41,6 @@ class PrecisionParams:
         self._eps_du = float(value)
 
     @property
-    def eps_dr(self):
-        return self._eps_dr
-
-    @eps_dr.setter
-    def eps_dr(self, value):
-        self._validate_positive(value, "eps_dr")
-        self._eps_dr = float(value)
-
-    @property
     def eps_dt(self):
         return self._eps_dt
 
@@ -72,24 +48,6 @@ class PrecisionParams:
     def eps_dt(self, value):
         self._validate_positive(value, "eps_dt")
         self._eps_dt = float(value)
-
-    @property
-    def max_iter_cr(self):
-        return self._max_iter_cr
-
-    @max_iter_cr.setter
-    def max_iter_cr(self, value):
-        self._validate_nonnegative_int(value, "max_iter_cr")
-        self._max_iter_cr = int(value)
-
-    @property
-    def max_iter_dr(self):
-        return self._max_iter_dr
-
-    @max_iter_dr.setter
-    def max_iter_dr(self, value):
-        self._validate_nonnegative_int(value, "max_iter_dr")
-        self._max_iter_dr = int(value)
 
     @property
     def epsabs(self):
