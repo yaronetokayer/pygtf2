@@ -263,7 +263,7 @@ def integrate_time_step(state, dt_prop, step_count):
 
     r_orig  = np.asarray(state.r,   dtype=np.float64)
     m       = np.asarray(state.m,   dtype=np.float64)
-    u_orig  = np.asarray(state.u,   dtype=np.float64)
+    u_orig  = 1.5 * np.asarray(state.v2,  dtype=np.float64)
     rho_orig= np.asarray(state.rho, dtype=np.float64)
 
     # Compute current luminosity array
@@ -292,7 +292,6 @@ def integrate_time_step(state, dt_prop, step_count):
 
     rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
     state.rmid = rmid
-    state.u = 1.5 * v2_new
     sqrt_v2_new = np.sqrt(v2_new)
     state.trelax = 1.0 / (sqrt_v2_new * rho_new)
 

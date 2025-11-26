@@ -197,7 +197,6 @@ class State:
             state.v2[k]     = sd['v2'].astype(np.float64)
             state.p[k]      = sd['p'].astype(np.float64)
             state.trelax[k] = sd['trelax'].astype(np.float64)
-            state.u[k]      = 1.5 * state.v2[k].copy()
         state.rmid = 0.5 * (state.r[:,1:] + state.r[:, :-1])
 
         # ===== Time + bookkeeping =====
@@ -558,7 +557,6 @@ class State:
 
         # Rho, u, and p from equation of state
         rho = 3.0 * ( m[:, 1:] - m[:, :-1] ) / dr3
-        u = 1.5 * v2
         p = rho * v2
 
         # Central smoothing for NFW profile
@@ -570,7 +568,6 @@ class State:
                 dr_ratio = (r[i, 2] - r[i, 0]) / (r[i, 3] - r[i, 1])
                 p[i, 0] = p[i, 1] - dr_ratio * (p[i, 2] - p[i, 1])
                 v2[i, 0] = p[i, 0] / rho[i, 0]
-                u[i, 0] = 1.5 * v2[i, 0]
 
         # Recompute pressure of central bin such that HE is guaranteed
         srho_c = rho[:, 1] + rho[:, 0]
@@ -579,7 +576,6 @@ class State:
         m_enc_c = np.sum(m[:, 1])
         p[:, 0] = p[:, 1] + srho_c * dr_c * m_enc_c / (4.0 * r_c**2)
         v2[:, 0] = p[:, 0] / rho[:, 0]
-        u[:, 0] = 1.5 * v2[:, 0]
 
         trelax = 1.0 / (np.sqrt(v2) * rho)
 
@@ -587,7 +583,6 @@ class State:
         self.rmid       = r_mid
         self.rho        = rho
         self.p          = p
-        self.u          = u
         self.v2         = v2
         self.trelax     = trelax
 
@@ -638,7 +633,6 @@ class State:
         self.p = p_new
         self.v2 = v2_new
         self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-        self.u = 1.5 * v2_new
         self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
 
         if chatter:
