@@ -34,12 +34,11 @@ def interp_linear_to_interfaces(r_edges_1d, q_cells_1d) -> np.ndarray:
     qR = q_cells_1d[1:]                                # right cell value (i+1)
     return qL + fac * (qR - qL)                        # shape (N-1,)
 
-@njit(float64[:](float64[:], float64[:, :], float64[:, :]), fastmath=True, cache=True)
-def sum_intensive_loglog(rmid0, rmid, x) -> np.ndarray:
+@njit(float64[:, :](float64[:], float64[:, :], float64[:, :]),
+      fastmath=True, cache=True)
+def interp_intensive_loglog(rmid0, rmid, x) -> np.ndarray:
     """
-    Sum an intensive, midpoint-defined quantity from all species onto a new
-    midpoint grid rmid0, using log–log (piecewise power-law) interpolation
-    between adjacent midpoints, with extrapolation outside each species' domain.
+    Log–log interpolate each species onto rmid0 without summing.
 
     Parameters
     ----------
@@ -48,16 +47,16 @@ def sum_intensive_loglog(rmid0, rmid, x) -> np.ndarray:
     rmid  : (s, N) float64
         Per-species midpoints (monotonic increasing per row; rmid[:, 0] > 0).
     x     : (s, N) float64
-        Per-species intensive values at those midpoints (positive for logs).
+        Per-species intensive values at those midpoints (positive for logs).    
 
     Returns
     -------
-    out : (N0,) float64
-        Summed intensive quantity evaluated at rmid0.
+    out : (s, N0) float64
+        Interpolated values for each species.
     """
     s, N = rmid.shape
     M = rmid0.shape[0]
-    out = np.zeros(M, dtype=np.float64)
+    out = np.zeros((s, M), dtype=np.float64)
 
     for j in range(s):
         rj = rmid[j]   # (N,)
@@ -66,18 +65,14 @@ def sum_intensive_loglog(rmid0, rmid, x) -> np.ndarray:
         # Loop over target midpoints
         for t in range(M):
             rt = rmid0[t]
-            # Avoid log(0) if someone passes rt==0 (shouldn't for midpoints)
-            if rt <= 0.0:
-                rt_eval = 1e-300
-            else:
-                rt_eval = rt
+            rt_eval = rt if rt > 0.0 else 1e-300
 
             # Binary search: find j1 such that rj[j1] <= rt < rj[j1+1]
             # Returns last index with rj[idx] <= rt
             lo = 0
             hi = N - 1
             while lo < hi:
-                mid = (lo + hi + 1) // 2  # upper mid to prevent infinite loop
+                mid = (lo + hi + 1) // 2
                 if rj[mid] <= rt_eval:
                     lo = mid
                 else:
@@ -97,11 +92,103 @@ def sum_intensive_loglog(rmid0, rmid, x) -> np.ndarray:
 
             # Piecewise power-law (log–log) interpolation/extrapolation
             a = (np.log(x1) - np.log(x0)) / (np.log(r1) - np.log(r0))
-            x_interp = x0 * np.exp(a * np.log(rt_eval / r0))
-
-            out[t] += x_interp
+            out[j, t] = x0 * np.exp(a * np.log(rt_eval / r0))
 
     return out
+
+@njit(float64[:](float64[:], float64[:, :], float64[:, :]),
+      fastmath=True, cache=True)
+def sum_intensive_loglog(rmid0, rmid, x):
+    """
+    Sum an intensive, midpoint-defined quantity from all species onto a new
+    midpoint grid rmid0, using log–log (piecewise power-law) interpolation
+    between adjacent midpoints, with extrapolation outside each species' domain.
+
+    Parameters
+    ----------
+    rmid0 : (N0,) float64
+        Target midpoints where the summed quantity is evaluated.
+    rmid  : (s, N) float64
+        Per-species midpoints (monotonic increasing per row; rmid[:, 0] > 0).
+    x     : (s, N) float64
+        Per-species intensive values at those midpoints (positive for logs).
+
+    Returns
+    -------
+    out : (N0,) float64
+        Summed intensive quantity evaluated at rmid0.
+    """
+    interp = interp_intensive_loglog(rmid0, rmid, x)  # (s, N0)
+    return np.sum(interp, axis=0)
+
+# @njit(float64[:](float64[:], float64[:, :], float64[:, :]), fastmath=True, cache=True)
+# def sum_intensive_loglog(rmid0, rmid, x) -> np.ndarray:
+#     """
+#     Sum an intensive, midpoint-defined quantity from all species onto a new
+#     midpoint grid rmid0, using log–log (piecewise power-law) interpolation
+#     between adjacent midpoints, with extrapolation outside each species' domain.
+
+#     Parameters
+#     ----------
+#     rmid0 : (N0,) float64
+#         Target midpoints where the summed quantity is evaluated.
+#     rmid  : (s, N) float64
+#         Per-species midpoints (monotonic increasing per row; rmid[:, 0] > 0).
+#     x     : (s, N) float64
+#         Per-species intensive values at those midpoints (positive for logs).
+
+#     Returns
+#     -------
+#     out : (N0,) float64
+#         Summed intensive quantity evaluated at rmid0.
+#     """
+#     s, N = rmid.shape
+#     M = rmid0.shape[0]
+#     out = np.zeros(M, dtype=np.float64)
+
+#     for j in range(s):
+#         rj = rmid[j]   # (N,)
+#         xj = x[j]      # (N,)
+
+#         # Loop over target midpoints
+#         for t in range(M):
+#             rt = rmid0[t]
+#             # Avoid log(0) if someone passes rt==0 (shouldn't for midpoints)
+#             if rt <= 0.0:
+#                 rt_eval = 1e-300
+#             else:
+#                 rt_eval = rt
+
+#             # Binary search: find j1 such that rj[j1] <= rt < rj[j1+1]
+#             # Returns last index with rj[idx] <= rt
+#             lo = 0
+#             hi = N - 1
+#             while lo < hi:
+#                 mid = (lo + hi + 1) // 2  # upper mid to prevent infinite loop
+#                 if rj[mid] <= rt_eval:
+#                     lo = mid
+#                 else:
+#                     hi = mid - 1
+#             j1 = lo
+
+#             # Clamp for extrapolation to use nearest interval slope
+#             if j1 < 0:
+#                 j1 = 0
+#             elif j1 > N - 2:
+#                 j1 = N - 2
+
+#             r0 = rj[j1]
+#             r1 = rj[j1 + 1]
+#             x0 = xj[j1]
+#             x1 = xj[j1 + 1]
+
+#             # Piecewise power-law (log–log) interpolation/extrapolation
+#             a = (np.log(x1) - np.log(x0)) / (np.log(r1) - np.log(r0))
+#             x_interp = x0 * np.exp(a * np.log(rt_eval / r0))
+
+#             out[t] += x_interp
+
+#     return out
 
 @njit(float64[:](float64[:], float64[:, :], float64[:, :]), fastmath=True, cache=True)
 def sum_extensive_loglog(r0, r, x) -> np.ndarray:

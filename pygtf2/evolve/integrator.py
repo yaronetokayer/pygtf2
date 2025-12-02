@@ -3,7 +3,7 @@ from collections import deque
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 from pygtf2.evolve.transport import compute_luminosities, conduct_heat
 from pygtf2.evolve.hydrostatic import revirialize_interp
-from pygtf2.util.calc import calc_rho_c, calc_r50_spread
+from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
 
 def run_until_stop(state, start_step, **kwargs):
     """
@@ -25,6 +25,7 @@ def run_until_stop(state, start_step, **kwargs):
     sim = state.config.sim
     chatter = bool(io.chatter)
     t_halt = float(sim.t_halt)
+    eps_dt = state.config.prec.eps_dt
     rho0_last_prof = float(state.rho_c)
     rho0_last_tevol = float(state.rho_c)
     r50_spread_last_tevol = float(state.r50_spread)
@@ -81,7 +82,7 @@ def run_until_stop(state, start_step, **kwargs):
         step_count = state.step_count
 
         # Compute proposed dt
-        dt_prop = compute_time_step(state)
+        dt_prop = eps_dt * state.mintrelax
 
         # Integrate time step
         integrate_time_step(state, dt_prop, step_count)
@@ -211,33 +212,6 @@ def run_until_stop(state, start_step, **kwargs):
         if chatter:
             print("Simulation halted: max time exceeded")
 
-def compute_time_step(state) -> float:
-    """
-    Compute time step to be used for integration step.
-
-    Arguments
-    ---------
-    state : State
-        The current simulation state.
-
-    Returns
-    -------
-    float
-        The recommended time step.
-    """
-    if state.step_count == 1:
-        return 1.0e-9
-    
-    prec = state.config.prec
-    # Relaxation-limited time step
-    dt1 = prec.eps_dt * state.mintrelax
-    # Energy stability-limited time step
-    tiny = np.finfo(np.float64).tiny
-    du_max_safe = max(state.du_max, tiny)
-    dt2 = state.dt * 0.95 * (prec.eps_du / du_max_safe)
-
-    return float(min(dt1, dt2))
-
 def integrate_time_step(state, dt_prop, step_count):
     """
     Advance state by one time step.
@@ -292,13 +266,11 @@ def integrate_time_step(state, dt_prop, step_count):
 
     rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
     state.rmid = rmid
-    sqrt_v2_new = np.sqrt(v2_new)
-    state.trelax = 1.0 / (sqrt_v2_new * rho_new)
+    state.trelax = v2_new**(3.0/2.0) / rho_new
 
-    state.maxvel    = float(np.max(sqrt_v2_new))
-    state.mintrelax = float(np.min(state.trelax))
-    state.rho_c     = calc_rho_c(rmid, rho_new)
-    state.r50_spread = calc_r50_spread(r_new, m)
+    state.mintrelax                     = float(np.min(state.trelax))
+    state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(rmid, rho_new, v2_new)
+    state.r50_spread                    = calc_r50_spread(r_new, m)
 
     # Diagnostics
     state.dt_cum += float(dt_prop)

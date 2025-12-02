@@ -57,6 +57,35 @@ def plot_r_markers(r_slice):
 
     ### OLD UNUSED METHODS HERE
 
+# now I just have a single time stepping criterion based on trelax.
+# the eps_du criterion is checked within the conduction step.
+def compute_time_step(state) -> float:
+    """
+    Compute time step to be used for integration step.
+
+    Arguments
+    ---------
+    state : State
+        The current simulation state.
+
+    Returns
+    -------
+    float
+        The recommended time step.
+    """
+    if state.step_count == 1:
+        return 1.0e-9
+    
+    prec = state.config.prec
+    # Relaxation-limited time step
+    dt1 = prec.eps_dt * state.mintrelax
+    # Energy stability-limited time step
+    tiny = np.finfo(np.float64).tiny
+    du_max_safe = max(state.du_max, tiny)
+    dt2 = state.dt * 0.95 * (prec.eps_du / du_max_safe)
+
+    return float(min(dt1, dt2))
+
 def write_log_entry_old(state, start_step):
     """ 
     Append a line to the simulation log file.

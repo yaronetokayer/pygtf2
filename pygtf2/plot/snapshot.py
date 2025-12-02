@@ -7,7 +7,7 @@ from tqdm import tqdm
 import shutil
 from pygtf2.io.read import extract_snapshot_data, extract_snapshot_indices
 
-def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=False):
+def plot_profile(ax, profile, data_list, legend=True, no_spec=False, grid=False, for_movie=False):
     """
     Plot specified profile on the passed axis object
 
@@ -16,11 +16,13 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
     ax : Axis
         Axis object on which to plot
     profile : str
-        Profile to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax'
+        Profile to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax', 'eta'
     data_list : dict
         Dictionary returned by extract_snapshot_data()
     legend : bool, optional
         If True, include a legend in the plot
+    no_spec : bool, optional
+        If True, do not include species legend
     grid : bool, optional
         If True, shows grid on axes
     for_movie : bool, should not be set by user
@@ -68,12 +70,16 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
         if profile in {'rho', 'm', 'p'}:
             y_tot = data[profile + '_tot'] if profile != 'm' else data['m_tot']
             y_candidates = [y_tot]
+        elif profile in {'eta'}:
+            y_tot = data[profile]
+            y_candidates = [y_tot]
         else:  # 'trelax' and 'v2' have no total
             y_candidates = []
 
-        for sp in species_names:
-            y_sp = data['species'][sp][profile]
-            y_candidates.append(y_sp)
+        if profile not in {'eta'}: # 'eta' has no per-species
+            for sp in species_names:
+                y_sp = data['species'][sp][profile]
+                y_candidates.append(y_sp)
 
         for y in y_candidates:
             y_pos = y[y > 0]
@@ -86,6 +92,8 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
         posmin = 1e-99
     if posmax <= 0:
         posmax = 1.0
+    if profile == 'eta' and posmax < 0.6:  # To put horizontal line at 0.5
+        posmax = 0.6
 
     # Pass 2: plot
     for ind, data in enumerate(data_list):
@@ -97,24 +105,35 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
         X_tot = 10.0**x_tot
         if profile in {'rho', 'm', 'p'}:
             y_tot = data[profile + '_tot'] if profile != 'm' else data['m_tot']
+        elif profile in {'eta'}:
+            y_tot = data[profile]
+        if profile in {'rho', 'm', 'p', 'eta'}:
             ax.plot(X_tot, y_tot, lw=2.2, color=color, ls='solid', label=time_lbl)
         
         # species (own linestyle), no extra legend spam
-        sp_xkey = 'lgr' if profile == 'm' else 'lgrm'
-        for ind, sp in enumerate(species_names):
-            label = '_nolegend_'
-            if profile in {'trelax', 'v2'} and ind == 1:
-                label = time_lbl
-            x_sp = data['species'][sp][sp_xkey]   # per-species log grid
-            X_sp = 10.0**x_sp
-            y_sp = data['species'][sp][profile]
-            ax.plot(X_sp, y_sp, lw=1.8, color=color, ls=style_map[sp], label=label)
+        if profile not in {'eta'}:
+            sp_xkey = 'lgr' if profile == 'm' else 'lgrm'
+            for ind, sp in enumerate(species_names):
+                label = '_nolegend_'
+                if profile in {'trelax', 'v2'} and ind == 1:
+                    label = time_lbl
+                x_sp = data['species'][sp][sp_xkey]   # per-species log grid
+                X_sp = 10.0**x_sp
+                y_sp = data['species'][sp][profile]
+                ax.plot(X_sp, y_sp, lw=1.8, color=color, ls=style_map[sp], label=label)
 
     # Cosmetics
     ax.set_xscale('log')
-    ax.set_yscale('log')
+    if profile not in {'eta'}:
+        ax.set_yscale('log')
+    if profile == 'eta':
+        ax.axhline(0.5, color='black', ls='--', lw=2)
+        ax.text(x=xmax, y=0.501, s='equipartition', ha='right', va='bottom')
     ax.set_xlim([xmin * 0.8, xmax * 1.2])
-    ax.set_ylim([posmin * 0.5, posmax * 10.0])
+    if profile not in {'eta'}:
+        ax.set_ylim([posmin * 0.5, posmax * 10.0])
+    else:   # Linear scale
+        ax.set_ylim([posmin * 0.9, posmax * 1.1])
     ax.set_xlabel(r'Radius [$r_\mathrm{s,0}$]', fontsize=14)
     ax.set_ylabel(profile, fontsize=14)
     ax.tick_params(axis='both', labelsize=12)
@@ -124,17 +143,19 @@ def plot_profile(ax, profile, data_list, legend=True, grid=False, for_movie=Fals
         time_legend = ax.legend(loc='lower left', frameon=True)
 
         # 2) Species legend (linestyles in black), including 'total' as solid
-        species_handles = [Line2D([0], [0], lw=2.2, color='black', ls='solid', label='total')]
-        species_handles += [
-            Line2D([0], [0], lw=1.8, color='black', ls=style_map[sp], label=sp)
-            for sp in species_names
-        ]
+        if not no_spec:
+            species_handles = [Line2D([0], [0], lw=2.2, color='black', ls='solid', label='total')]
+            species_handles += [
+                Line2D([0], [0], lw=1.8, color='black', ls=style_map[sp], label=sp)
+                for sp in species_names
+            ]
 
-        species_legend = ax.legend(handles=species_handles, loc='lower center', frameon=True, ncol=1)
+            species_legend = ax.legend(handles=species_handles, loc='lower center', frameon=True, ncol=1)
 
         # Keep both legends
         ax.add_artist(time_legend)
-        ax.add_artist(species_legend)
+        if not no_spec:
+            ax.add_artist(species_legend)
     if grid:
         ax.grid(True, which="both", ls="--", alpha=0.4)
 
@@ -149,7 +170,7 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', base_dir=None, filepath
     snapshots : int or list of int
         Snapshot indices to plot
     profiles : str or list of str, optional
-        Profiles to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax'
+        Profiles to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax', 'eta'
     base_dir : str, optional
         Required if any model is passed as an integer.  The directory in which all ModelXXX subdirectories reside.
     filepath : str, optional
@@ -193,7 +214,8 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', base_dir=None, filepath
     fig, axs = plt.subplots(1, n, figsize=(6*n, 5))
 
     if n == 1:
-        plot_profile(axs, profiles_list[0], data_list, legend=True, grid=grid, for_movie=for_movie)
+        no_spec = profiles_list[0] == 'eta'
+        plot_profile(axs, profiles_list[0], data_list, legend=True, no_spec=no_spec, grid=grid, for_movie=for_movie)
     else:
         for ind, ax in enumerate(axs):
             # legend = False if ind < len(axs) - 1 else True

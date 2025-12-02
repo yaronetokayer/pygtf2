@@ -1,8 +1,159 @@
 import numpy as np
 from numba import njit, types, float64
-from pygtf2.util.interpolate import sum_intensive_loglog_single
+from pygtf2.util.interpolate import sum_intensive_loglog_single, interp_intensive_loglog
 from pygtf2.profiles.bkg_pot import hernq_static
+ 
+@njit((float64[:], float64[:, :], float64[:], float64[:]), fastmath=True, cache=True)
+def compute_eta_multi(masses, sigmas, eta_out, err_out):
+    """
+    Compute eta for arbitrary number of species using log-log regression.
+    
+    Arguments
+    ---------
+    masses : array-like, shape (s,)
+        Mass of each species.
+    sigmas : array-like, shape (s, N)
+        Velocity dispersions for each species.
+    Return arrays are preallocated
+        
+    Returns
+    -------
+    eta_out : float or ndarray of shape (N,)
+        Best-fit equipartition exponent(s).
+    error_out : float or ndarray of shape (N,)
+        RMS residual in log-log space; measure of deviation from power law.
+    """
+    s, N = sigmas.shape
 
+    # log masses
+    x = np.empty(s)
+    for i in range(s):
+        x[i] = np.log(masses[i])
+    x_mean = 0.0
+    for i in range(s):
+        x_mean += x[i]
+    x_mean /= s
+
+    # log sigmas
+    y = np.empty((s, N))
+    for i in range(s):
+        for j in range(N):
+            y[i, j] = np.log(sigmas[i, j])
+    y_mean = np.zeros(N)
+    for j in range(N):
+        temp = 0.0
+        for i in range(s):
+            temp += y[i, j]
+        y_mean[j] = temp / s
+
+    # variance of masses
+    var = 0.0
+    for i in range(s):
+        dx = x[i] - x_mean
+        var += dx * dx
+
+    # covariance in each radial bin
+    for j in range(N):
+        cov = 0.0
+        for i in range(s):
+            cov += (x[i] - x_mean) * (y[i, j] - y_mean[j])
+        eta_out[j] = -cov / var
+
+    # compute RMS error
+    for j in range(N):
+        c = y_mean[j] + eta_out[j] * x_mean
+        acc = 0.0
+        for i in range(s):
+            r = y[i, j] + eta_out[j] * x[i] - c
+            acc += r * r
+        err_out[j] = np.sqrt(acc / s)
+
+def compute_eta(masses, sigmas):
+    """
+    User-facing function.
+    If only one species: eta = 0, error = 0.
+    Otherwise: call numba backend.
+    """
+    masses = np.asarray(masses)
+    sigmas = np.asarray(sigmas)
+
+    # Single species case (s = 1)
+    if sigmas.ndim == 1:
+        # shape is (N,) → single species, one radial array
+        return 0.0, 0.0
+
+    # Multi-species case
+    s, N = sigmas.shape
+    if s == 1:
+        # Another possibility: sigmas is (1, N)
+        return 0.0, 0.0
+
+    # Prepare output arrays
+    eta = np.empty(N, dtype=np.float64)
+    err = np.empty(N, dtype=np.float64)
+
+    compute_eta_multi(masses, sigmas, eta, err)
+    return eta, err
+
+@njit((float64[:], float64[:, :], float64[:, :],), fastmath=True, cache=True)
+def compute_eta_interp(masses, rmid, v2):
+    r"""
+    Compute eta profile for arbitrary number of species.
+    Defines a shared grid, computes the interpolated v2, 
+    and the computes eta for each radial bin.
+
+    eta defined by sigma \propto m^-eta
+    
+    Arguments
+    ---------
+    masses : array-like, shape (s,)
+        Mass of each species.
+    rmid : array-like, shape (s, N)
+        Midpoints of radial grid points per species, where v2 is evaluated.
+    v2 : array-like, shape (N,) or (s, N)
+        Square of velocity dispersion for each species.
+
+    Returns
+    -------
+    rmid_shared : ndarray, shape (N,)
+    eta : ndarray, shape (N,)
+    """
+    s, N = rmid.shape
+
+    rmin = rmid.min()
+    rmax = rmid.max()
+    rmid_shared = np.empty(N, dtype=np.float64)
+
+    # geometric spacing factor
+    if N > 1:
+        log_rmin = np.log(rmin)
+        log_rmax = np.log(rmax)
+        dlog = (log_rmax - log_rmin) / (N - 1)
+
+        for i in range(N):
+            rmid_shared[i] = np.exp(log_rmin + i * dlog)
+    else:
+        # degenerately single-point grid
+        rmid_shared[0] = rmin
+    
+    eta_out = np.zeros(N, dtype=np.float64)
+    err_out = np.zeros(N, dtype=np.float64)
+
+    if s == 1:
+        return rmid_shared, eta_out
+
+    v2_interp = interp_intensive_loglog(rmid_shared, rmid, v2)
+
+    # square root into temporary array
+    sigma_interp = np.empty((s, N), dtype=np.float64)
+    for i in range(s):
+        for j in range(N):
+            sigma_interp[i, j] = np.sqrt(v2_interp[i, j])
+
+    # compute eta
+    compute_eta_multi(masses, sigma_interp, eta_out, err_out)
+
+    return rmid_shared, eta_out
 
 @njit(float64[:](float64[:], float64[:]), fastmath=True, cache=True)
 def add_bkg_pot(r, bkg_param):
@@ -42,10 +193,13 @@ def add_bkg_pot_scalar(r, bkg_param):
     r_arr = np.array([r], dtype=np.float64)
     return add_bkg_pot(r_arr, bkg_param)[0]
 
-@njit(types.float64(types.float64[:, ::1], types.float64[:, ::1]), fastmath=True, cache=True)
-def calc_rho_c(rmid, rho):
+@njit(types.Tuple((float64, float64, float64))(float64[:, :], float64[:, :], float64[:, :]), fastmath=True, cache=True)
+def calc_rho_v2_r_c(rmid, rho, v2):
     """
-    Computes central density of system at smallest non-zero radial point.
+    Computes central values of system at smallest non-zero radial point.
+    rho, v2, and core radius.
+    Use core radius definition of Spitzer (1987)
+    r_c^2 = 3*v2_c / (4 * pi * G * rho_c)
 
     Arguments
     ---------
@@ -53,17 +207,27 @@ def calc_rho_c(rmid, rho):
         Midpoint radii per species.
     rho : ndarray, shape (s, N)
         Shell densities per species.
+    v2 : ndarray, shape (s, N)
+        Shell velocity dispersion squared per species.
 
     Returns
     -------
-    rho_c : str
+    rho_c : float
         Central density
+    v2_c : float
+        Central square of velocity dispersion
+    r_c : float
+        Core radius
     """
     r0 = np.min(rmid[:,:])
 
     rho_c = sum_intensive_loglog_single(r0, rmid, rho)
 
-    return float(rho_c)
+    v2_c = sum_intensive_loglog_single(r0, rmid, v2)
+
+    r_c = np.sqrt( 3 * v2_c / rho_c )
+
+    return float(rho_c), float(v2_c), float(r_c)
 
 @njit(float64[:](float64[:], float64[:], float64[:]), fastmath=True, cache=True)
 def mass_fraction_radii(r_edges, m_edges, fracs):

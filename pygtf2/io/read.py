@@ -47,7 +47,8 @@ def extract_time_evolution_data(filepath):
           'step'     : array,
           'time'     : array,
           'rho_c_tot': array,
-          'v_max'    : array,
+          'v2_c'     : array,
+          'r_c'      : array,
           'mintrel'  : array,
           'species'  : {
               'dm': {
@@ -85,7 +86,8 @@ def extract_time_evolution_data(filepath):
         'step'     : data[:, idx['step']].astype(int),
         'time'     : data[:, idx['time']],
         'rho_c_tot': data[:, idx['rho_c_tot']],
-        'v_max'    : data[:, idx['v_max']],
+        'v2_c'     : data[:, idx['v2_c']],
+        'r_c'      : data[:, idx['r_c']],
         'mintrel'  : data[:, idx['mintrel']],
         'species'  : {},
     }
@@ -210,6 +212,7 @@ def extract_snapshot_data(filename):
           'm_tot'    : array,
           'rho_tot'  : array,
           'p_tot'    : array,
+          'eta'      : array,
           'species'  : {
               'dm': {
                   'lgr'   : array,
@@ -244,6 +247,7 @@ def extract_snapshot_data(filename):
         'm_tot'   : data[:, idx['m_tot']],
         'rho_tot' : data[:, idx['rho_tot']],
         'p_tot'   : data[:, idx['p_tot']],
+        'eta'     : data[:, idx['eta']],
         'species' : {},
     }
 

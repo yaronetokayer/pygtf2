@@ -112,10 +112,11 @@ def write_log_entry(state, start_step):
         f"{'time':>12}",
         f"{'<dt>':>12}",
         f"{'rho_c':>12}",
-        f"{'v_max':>12}",
+        f"{'v2_c':>12}",
+        f"{'r_c':>12}",
+        f"{'r50_spread':>10}",
         f"{'<dt lim>':>8}",
         f"{'<du lim>':>8}",
-        f"{'r50_spread':>10}",
     ]
 
     header = "  ".join(header_cols) + "\n"
@@ -128,10 +129,11 @@ def write_log_entry(state, start_step):
             f"{state.t:12.6e}",
             f"{'N/A':>12}",                 # <dt>
             f"{state.rho_c:12.6e}",
-            f"{state.maxvel:12.6e}",
+            f"{state.v2_c:12.6e}",
+            f"{state.r_c:12.6e}",
+            f"{state.r50_spread:10.4e}",
             f"{'N/A':>8}",                  # <dt lim>
             f"{'N/A':>8}",                  # <du lim>
-            f"{state.r50_spread:10.4e}"
         ]
 
     else:
@@ -141,10 +143,11 @@ def write_log_entry(state, start_step):
             f"{state.t:12.6e}",
             f"{state.dt_cum / nlog:12.6e}",
             f"{state.rho_c:12.6e}",
-            f"{state.maxvel:12.6e}",
+            f"{state.v2_c:12.6e}",
+            f"{state.r_c:12.6e}",
+            f"{state.r50_spread:10.4e}",
             f"{state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}",
             f"{state.du_max_cum / prec.eps_du / nlog:8.2e}",
-            f"{state.r50_spread:10.4e}"
         ]
 
     new_line = "  ".join(row) + "\n"
@@ -169,7 +172,7 @@ def write_profile_snapshot(state, initialize=False):
 
     Columns:
         i, log_r, log_rmid,
-        m_tot, rho_tot, p_tot,
+        m_tot, rho_tot, p_tot, eta
         [for each species in state.labels in order:]
             m[<label>], rho[<label>], v2[<label>], p[<label>], trelax[<label>]
 
@@ -192,7 +195,8 @@ def write_profile_snapshot(state, initialize=False):
     s = len(labels)
 
     # Compute totals on the fly
-    from pygtf2.util.interpolate import sum_intensive_loglog, sum_extensive_loglog
+    from pygtf2.util.interpolate import sum_intensive_loglog, sum_extensive_loglog, interp_intensive_loglog
+    from pygtf2.util.calc import compute_eta_multi
     r_tot = np.zeros((Np1,))
     r_tot_min = np.min(r[:,1:])
     r_tot_max = np.max(r[:,1:])
@@ -202,6 +206,11 @@ def write_profile_snapshot(state, initialize=False):
     m_tot = sum_extensive_loglog(r_tot, r, state.m)
     rho_tot = sum_intensive_loglog(r_totmid, rmid, state.rho)
     p_tot = sum_intensive_loglog(r_totmid, rmid, state.p)
+    eta = np.zeros(N, dtype=np.float64)
+    if s != 1:
+        v2_interp = interp_intensive_loglog(r_totmid, rmid, state.v2)
+        err = np.zeros(N, dtype=np.float64)
+        compute_eta_multi(state.m_part, np.sqrt(v2_interp), eta, err)   
 
     # Build header
     header_cols = [
@@ -211,6 +220,7 @@ def write_profile_snapshot(state, initialize=False):
         f"{'m_tot':>13}",
         f"{'rho_tot':>13}",
         f"{'p_tot':>13}",
+        f"{'eta':>13}",
     ]
     # Per-species blocks
     for name in labels:
@@ -237,6 +247,7 @@ def write_profile_snapshot(state, initialize=False):
                 f"{m_tot[i+1]: 13.6e}",
                 f"{rho_tot[i]: 13.6e}",
                 f"{p_tot[i]: 13.6e}",
+                f"{eta[i]: 13.6e}",
             ]
             # Per-species fields
             for k in range(s):
@@ -291,7 +302,7 @@ def write_time_evolution(state):
     Append time evolution data to time_evolution.txt
 
     Columns:
-      step, time, rho_c_tot, v_max, mintrel,
+      step, time, rho_c_tot, v2_c, r_c, mintrel,
       [for each species in state.labels in order:]
         rho_c[<label>], r1pct[<label>], r5pct[<label>], r10pct[<label>],
         r20pct[<label>], r50pct[<label>], r90pct[<label>]
@@ -313,7 +324,8 @@ def write_time_evolution(state):
         f"{'step':>10}",
         f"{'time':>13}",
         f"{'rho_c_tot':>13}",
-        f"{'v_max':>13}",
+        f"{'v2_c':>13}",
+        f"{'r_c':>13}",
         f"{'mintrel':>13}",
     ]
 
@@ -335,7 +347,8 @@ def write_time_evolution(state):
         f"{step:10d}",
         f"{state.t: 13.6e}",
         f"{state.rho_c: 13.6e}",
-        f"{state.maxvel: 13.6e}",
+        f"{state.v2_c: 13.6e}",
+        f"{state.r_c: 13.6e}",
         f"{state.mintrelax: 13.6e}",
     ]
 

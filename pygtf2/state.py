@@ -146,7 +146,7 @@ class State:
         # --- imports
         from pygtf2.io.read import import_metadata, load_snapshot_bundle
         from pygtf2.config import Config
-        from pygtf2.util.calc import calc_rho_c, calc_r50_spread
+        from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
 
         # --- metadata + snapshot
         meta = import_metadata(p)
@@ -210,10 +210,9 @@ class State:
         state.du_max = float(prec.eps_du)
 
         # quick diagnostics (global)
-        state.maxvel     = float(np.sqrt(np.max(state.v2)))
-        state.mintrelax  = float(np.min(state.trelax))
-        state.rho_c      = calc_rho_c(state.rmid, state.rho)
-        state.r50_spread = calc_r50_spread(state.r, state.m)
+        state.mintrelax                     = float(np.min(state.trelax))
+        state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(state.rmid, state.rho, state.v2)
+        state.r50_spread                    = calc_r50_spread(state.r, state.m)
 
         # running diagnostics
         state.dt_cum = 0.0
@@ -577,7 +576,7 @@ class State:
         p[:, 0] = p[:, 1] + srho_c * dr_c * m_enc_c / (4.0 * r_c**2)
         v2[:, 0] = p[:, 0] / rho[:, 0]
 
-        trelax = 1.0 / (np.sqrt(v2) * rho)
+        trelax = v2**(3.0/2.0) / rho
 
         self.m          = m
         self.rmid       = r_mid
@@ -633,7 +632,7 @@ class State:
         self.p = p_new
         self.v2 = v2_new
         self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-        self.trelax = 1.0 / (np.sqrt(v2_new) * rho_new)
+        self.trelax = v2_new**(3.0/2.0) / rho_new
 
         if chatter:
             print(f"\tHydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}.  HE res {he_res}")
@@ -642,7 +641,7 @@ class State:
         """
         Resets initial state
         """
-        from pygtf2.util.calc import calc_rho_c, calc_r50_spread
+        from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
 
         config = self.config
         prec = config.prec
@@ -658,10 +657,9 @@ class State:
         self.dt = 1e-7                      # Initial time step (will be updated adaptively)
         self.du_max = prec.eps_du           # Initialize the max du to upper limit
 
-        self.maxvel     = float(np.sqrt(np.max(self.v2)))
-        self.mintrelax  = float(np.min(self.trelax))
-        self.rho_c      = calc_rho_c(self.rmid, self.rho)
-        self.r50_spread = calc_r50_spread(self.r, self.m)
+        self.mintrelax                  = float(np.min(self.trelax))
+        self.rho_c, self.v2_c, self.r_c = calc_rho_v2_r_c(self.rmid, self.rho, self.v2)
+        self.r50_spread                 = calc_r50_spread(self.r, self.m)
 
         # For diagnostics
         self.dt_cum = 0.0
@@ -728,7 +726,7 @@ class State:
         quantity : str, optional
             Key from the time_evolution.txt file to plot on the y-axis.
             Default is 'rho_c'.
-            Options are 'rho_c', 'v_max', 'mintrel', 'r_enc'.
+            Options are 'rho_c', 'v2_c', 'r_c', 'mintrel', 'r_enc'.
         ylabel : str, optional
             Custom y-axis label. Defaults to quantity.
         logy : bool, optional
@@ -754,7 +752,7 @@ class State:
         snapshots : int or list of int, optional
             Snapshot indices to plot, default is the current state
         profiles : str or list of str, optional
-            Profiles to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax', 'kn'
+            Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta, 'p', 'trelax', 'kn'
         filepath : str, optional
             If provided, save the plot to this file.
         show : bool, optional
@@ -777,7 +775,7 @@ class State:
         filepath : str, optional
             Save the plot to this file.  Defaults to '/base_dir/ModelXXX/movie_{profiles}.mp4'
         profiles : str or list of str, optional
-            Profiles to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax', 'kn'
+            Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta', 'p', 'trelax', 'kn'
         grid : bool, optional
             If True, shows grid on axes
         fps : int, optional

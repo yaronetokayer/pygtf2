@@ -16,7 +16,7 @@ class PrecisionParams:
 
     def __init__(
         self,
-        eps_du : float = 1.0e-4,
+        eps_du : float = 1.0e-3,
         eps_dt : float = 1.0e-3,
         epsabs : float = 1e-6,
         epsrel : float = 1e-6
