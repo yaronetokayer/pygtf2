@@ -43,7 +43,7 @@ class Config:
         sim: Optional[SimParams | Dict[str, Any]] = None,
         prec: Optional[PrecisionParams | Dict[str, Any]] = None,
         *,
-        mtot: Optional[float] = 3.0e9,
+        mtot: Optional[float] = 5.0e5,
     ) -> None:
         self.io = _init_param(IOParams, io)
         self.grid = _init_param(GridParams, grid)

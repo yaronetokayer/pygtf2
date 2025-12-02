@@ -15,15 +15,15 @@ PROFILE_SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     "abg": {
         "applicable": {"cvir", "r_s", "z", "alpha", "beta", "gamma"},
-        "defaults":   {"cvir": None, "r_s": 1.0, "z": 0.0, "alpha": 4.0, "beta": 4.0, "gamma": 0.1},
+        "defaults":   {"cvir": None, "r_s": 0.0025, "z": 0.0, "alpha": 4.0, "beta": 4.0, "gamma": 0.1},
     },
     "exp": {
         "applicable": {"r_s", "z"},
-        "defaults":   {"r_s": 1.0, "z": 0.0},
+        "defaults":   {"r_s": 0.0025, "z": 0.0},
     },
     "king": {
         "applicable": {"r_s", "W0", "z"}, # r_s is core radius
-        "defaults":   {"r_s": 1.0, "W0": 5.0, "z": 0.0},
+        "defaults":   {"r_s": 0.0025, "W0": 5.0, "z": 0.0},
     },
 }
 

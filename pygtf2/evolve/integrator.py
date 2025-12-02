@@ -46,7 +46,7 @@ def run_until_stop(state, start_step, **kwargs):
     osc_threshold_on  = 100     # avg spacing < 100 steps → oscillation detected
     osc_threshold_off = 10_000     # avg spacing > 10k steps → stable again
 
-    min_prof_spacing = 1_000_000
+    min_prof_spacing = 500_000
     min_tevol_spacing = 100_000
 
     prof_desired_steps = deque(maxlen=osc_window)       # double-ended queue
