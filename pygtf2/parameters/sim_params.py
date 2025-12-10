@@ -30,6 +30,7 @@ class SimParams:
             alpha : float = 1.217,
             beta : float = 1.0,
             b : float = 0.45,
+            evap : bool = False,
             bkg: dict | None = None,
     ):
         self._t_halt = None
@@ -38,6 +39,7 @@ class SimParams:
         self._alpha = None
         self._beta = None
         self._b = None
+        self._evap = None
         self._bkg = dict(self.DEFAULT_BKG)
 
         self.t_halt = t_halt
@@ -46,6 +48,7 @@ class SimParams:
         self.alpha = alpha
         self.beta = beta
         self.b = b
+        self.evap = evap
         if bkg is not None:
             self.bkg = bkg
 
@@ -108,6 +111,16 @@ class SimParams:
         if value <= 0:
             raise ValueError("b must be positive")
         self._b = float(value)
+
+    @property
+    def evap(self):
+        return self._evap
+
+    @evap.setter
+    def evap(self, value):
+        if not isinstance(value, (bool, int)) or (isinstance(value, int) and value not in (0, 1)):
+            raise ValueError("evap must be a bool (True/False) or int (0/1)")
+        self._evap = bool(value)
 
     @property
     def bkg(self):

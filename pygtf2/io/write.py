@@ -319,6 +319,26 @@ def write_time_evolution(state):
     labels = list(state.labels)
     s = len(labels)
 
+    #--- Compute eta_core on the fly
+    from pygtf2.util.interpolate import sum_intensive_loglog, interp_intensive_loglog
+    from pygtf2.util.calc import compute_eta_multi
+    rmid = state.rmid
+    length = 75
+    r_tot = np.zeros((length+1,))
+    r_tot_min = np.min(state.r[:,1])
+    r_tot_max = state.r_c
+    r_tot[1:] = np.geomspace(r_tot_min, r_tot_max, num=length, endpoint=True)
+    r_totmid = 0.5 * (r_tot[1:] + r_tot[:-1])
+
+    rho_tot = sum_intensive_loglog(r_totmid, rmid, state.rho)
+    eta = np.zeros(length, dtype=np.float64)
+    if s != 1:
+        v2_interp = interp_intensive_loglog(r_totmid, rmid, state.v2)
+        err = np.zeros(length, dtype=np.float64)
+        compute_eta_multi(state.m_part, np.sqrt(v2_interp), eta, err) 
+    w = rho_tot * (r_tot[1:]**3 - r_tot[:-1]**3) # Mass weighted
+    eta_c = np.sum(w*eta) / np.sum(w)
+
     # Build header
     header = [
         f"{'step':>10}",
@@ -326,6 +346,7 @@ def write_time_evolution(state):
         f"{'rho_c_tot':>13}",
         f"{'v2_c':>13}",
         f"{'r_c':>13}",
+        f"{'eta_c':>13}",
         f"{'mintrel':>13}",
     ]
 
@@ -349,6 +370,7 @@ def write_time_evolution(state):
         f"{state.rho_c: 13.6e}",
         f"{state.v2_c: 13.6e}",
         f"{state.r_c: 13.6e}",
+        f"{eta_c: 13.6e}",
         f"{state.mintrelax: 13.6e}",
     ]
 

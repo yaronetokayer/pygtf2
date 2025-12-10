@@ -57,11 +57,11 @@ def compute_luminosities(c2, r, u, rho, mrat, lnL) -> np.ndarray:
 
     return L
 
-@njit(types.Tuple((float64[:, :], float64, float64,))
+@njit(types.Tuple((float64[:, :], float64[:, :], float64, float64,))
       (float64[:, :], float64[:, :], float64[:, :], float64[:, :],
         float64[:, :], float64[:], float64[:, :], float64, float64, float64),
     cache=True)
-def conduct_heat(m, u, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1) -> tuple[np.ndarray, float, float]:
+def conduct_heat(m, u, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1) -> tuple[np.ndarray, np.ndarray, float, float]:
     """
     Conduct heat and update internal energies (u) and pressures (p) for all species.
 
@@ -108,6 +108,8 @@ def conduct_heat(m, u, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1) -> tuple[np.
     -------
     p_new : ndarray, shape (s, N)
         Updated pressure array after applying du and recomputing p = (2/3) * rho * u_new.
+    v2_new : ndarray, shape (s, N)
+        Updated v2 array after applying du and recomputing v2 = (2/3) u_new.
     dumax : float
         Observed maximum relative change in u (after any scaling).
     dt_eff : float
@@ -118,9 +120,10 @@ def conduct_heat(m, u, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1) -> tuple[np.
     N = Np1 - 1
 
     # Outputs
-    u_new = np.empty_like(u)
-    p_new = np.empty_like(u)  # same (s, N) shape
-    du    = np.empty_like(u)
+    u_new   = np.empty_like(u)
+    v2_new  = np.empty_like(u)
+    p_new   = np.empty_like(u)  # same (s, N) shape
+    du      = np.empty_like(u)
 
     # ---------- intra-species conduction (flux divergence in mass coord) ----------
     # dudt_cond[n,i] = - (L[n,i+1]-L[n,i]) / (M[n,i+1]-M[n,i])
@@ -235,6 +238,7 @@ def conduct_heat(m, u, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1) -> tuple[np.
     for n in range(s):
         for i in range(N):
             u_new[n, i] = u[n, i] + du[n, i]
+            v2_new[n, i] = (2.0 / 3.0) * u_new[n, i]
             p_new[n, i] = (2.0 / 3.0) * rho[n, i] * u_new[n, i]
 
-    return p_new, float(dumax), float(dt_eff)
+    return p_new, v2_new, float(dumax), float(dt_eff)

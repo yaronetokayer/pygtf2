@@ -635,7 +635,7 @@ class State:
         self.trelax = v2_new**(3.0/2.0) / rho_new
 
         if chatter:
-            print(f"\tHydrostatic equilibrium achieved in {i} iterations. Max |dr/r|/eps_dr = {dr_max_new/eps_dr:.2e}.  HE res {he_res}")
+            print(f"\tHydrostatic equilibrium achieved in {i} iterations. Max |dr/r| = {dr_max_new:.2e}.  HE res {he_res}")
 
     def reset(self):
         """

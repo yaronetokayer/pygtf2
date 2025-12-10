@@ -49,6 +49,7 @@ def extract_time_evolution_data(filepath):
           'rho_c_tot': array,
           'v2_c'     : array,
           'r_c'      : array,
+          'eta_c'    : array,
           'mintrel'  : array,
           'species'  : {
               'dm': {
@@ -88,6 +89,7 @@ def extract_time_evolution_data(filepath):
         'rho_c_tot': data[:, idx['rho_c_tot']],
         'v2_c'     : data[:, idx['v2_c']],
         'r_c'      : data[:, idx['r_c']],
+        'eta_c'      : data[:, idx['eta_c']],
         'mintrel'  : data[:, idx['mintrel']],
         'species'  : {},
     }

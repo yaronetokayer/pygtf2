@@ -12,7 +12,7 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
     models : State | Config | int | list
         State or Config objects, or integer model numbers.
         If quantity is 'r_enc', only one model can be passed.
-    quantity : {'rho_c','v2_c', 'r_c', 'mintrel', 'r_enc'}, optional
+    quantity : {'rho_c','v2_c', 'r_c', 'eta_c','mintrel', 'r_enc'}, optional
         What to plot on y-axis. If 'rho_c', also plots per-species curves.  Default is rho_c
     ylabel : str, optional
         Custom y-axis label. Defaults to quantity.
@@ -45,8 +45,8 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
 
     data_list = [extract_time_evolution_data(_resolve_path(m)) for m in models]
 
-    if quantity not in {'rho_c', 'v2_c', 'r_c', 'mintrel', 'r_enc'}:
-        raise ValueError("quantity must be one of {'rho_c', 'v2_c', 'r_c', 'mintrel', 'r_enc'}")
+    if quantity not in {'rho_c', 'v2_c', 'r_c', 'eta_c', 'mintrel', 'r_enc'}:
+        raise ValueError("quantity must be one of {'rho_c', 'v2_c', 'r_c', 'eta_c', 'mintrel', 'r_enc'}")
     
     # Special handling for r_enc: require exactly one model
     if quantity == 'r_enc' and len(models) != 1:
@@ -55,7 +55,7 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
     fig, ax = plt.subplots(figsize=(7, 5))
     cmap = plt.get_cmap('tab10')
 
-    if quantity in {'rho_c', 'v2_c', 'r_c', 'mintrel'}:
+    if quantity in {'rho_c', 'v2_c', 'r_c', 'eta_c','mintrel'}:
         for i, data in enumerate(data_list):
             color = cmap(i % 10)
             model_label = f"{data.get('model_id', i):03d}"

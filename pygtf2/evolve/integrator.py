@@ -3,6 +3,7 @@ from collections import deque
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 from pygtf2.evolve.transport import compute_luminosities, conduct_heat
 from pygtf2.evolve.hydrostatic import revirialize_interp
+from pygtf2.evolve.evaporate import evaporate
 from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
 
 def run_until_stop(state, start_step, **kwargs):
@@ -227,26 +228,30 @@ def integrate_time_step(state, dt_prop, step_count):
         Step count
     """
     # Store state attributes for fast access in loop and to pass into njit functions
-    prec = state.config.prec
+    config = state.config
     char  = state.char
     bkg_param = state.bkg_param
+    evap = config.sim.evap
 
     c1 = float(char.c1); c2 = float(char.c2)
+    eps_du = float(config.prec.eps_du)
     mrat = state.mrat
     lnL = char.lnL
 
-    r_orig  = np.asarray(state.r,   dtype=np.float64)
-    m       = np.asarray(state.m,   dtype=np.float64)
-    u_orig  = 1.5 * np.asarray(state.v2,  dtype=np.float64)
-    rho_orig= np.asarray(state.rho, dtype=np.float64)
-
-    # Compute current luminosity array
-    lum = compute_luminosities(c2, r_orig, u_orig, rho_orig, mrat, lnL)
-
-    eps_du = float(prec.eps_du)
+    r_orig      = np.asarray(state.r,   dtype=np.float64)
+    rmid_orig   = np.asarray(state.rmid,   dtype=np.float64)
+    m           = np.asarray(state.m,   dtype=np.float64)
+    u_orig      = 1.5 * np.asarray(state.v2,  dtype=np.float64)
+    rho_orig    = np.asarray(state.rho, dtype=np.float64)
 
     ### Step 1: Energy transport ###
-    p_cond, du_max, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, r_orig, dt_prop, eps_du, c1)
+    lum = compute_luminosities(c2, r_orig, u_orig, rho_orig, mrat, lnL)
+    p_cond, v2_cond, du_max, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, r_orig, dt_prop, eps_du, c1)
+
+    # Apply evaporation
+    if evap:
+        evaporate(r_orig, rmid_orig, m, v2_cond, rho_orig, dt_prop) # Modifies rho and m in place
+        p_cond = v2_cond * rho_orig
 
     ### Step 2: Reestablish hydrostatic equilibrium ###
     status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m, bkg_param)
@@ -263,6 +268,8 @@ def integrate_time_step(state, dt_prop, step_count):
     v2_new = p_new / rho_new
     state.v2 = v2_new
     state.du_max = du_max
+    if evap:
+        state.m = m
 
     rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
     state.rmid = rmid

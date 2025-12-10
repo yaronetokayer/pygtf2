@@ -95,8 +95,8 @@ def compute_eta(masses, sigmas):
     compute_eta_multi(masses, sigmas, eta, err)
     return eta, err
 
-@njit((float64[:], float64[:, :], float64[:, :],), fastmath=True, cache=True)
-def compute_eta_interp(masses, rmid, v2):
+@njit((float64[:], float64[:, :], float64[:, :],float64,), fastmath=True, cache=True)
+def compute_eta_interp(masses, rmid, v2, rmax=0.0):
     r"""
     Compute eta profile for arbitrary number of species.
     Defines a shared grid, computes the interpolated v2, 
@@ -112,6 +112,8 @@ def compute_eta_interp(masses, rmid, v2):
         Midpoints of radial grid points per species, where v2 is evaluated.
     v2 : array-like, shape (N,) or (s, N)
         Square of velocity dispersion for each species.
+    rmidmax : float
+        Maximum value for interpolated rmid
 
     Returns
     -------
@@ -121,7 +123,10 @@ def compute_eta_interp(masses, rmid, v2):
     s, N = rmid.shape
 
     rmin = rmid.min()
-    rmax = rmid.max()
+    if rmax <= 0.0:
+        rmax = rmid.max()
+    else:
+        N = int(N * rmax / rmid.max())
     rmid_shared = np.empty(N, dtype=np.float64)
 
     # geometric spacing factor
@@ -219,13 +224,14 @@ def calc_rho_v2_r_c(rmid, rho, v2):
     r_c : float
         Core radius
     """
-    r0 = np.min(rmid[:,:])
+    r0 = np.min(rmid[:,0])
 
     rho_c = sum_intensive_loglog_single(r0, rmid, rho)
 
     v2_c = sum_intensive_loglog_single(r0, rmid, v2)
 
-    r_c = np.sqrt( 3 * v2_c / rho_c )
+    # Should be good estimate within order unity, based on exact result from a King profile
+    r_c = np.sqrt( v2_c / rho_c )  
 
     return float(rho_c), float(v2_c), float(r_c)
 
