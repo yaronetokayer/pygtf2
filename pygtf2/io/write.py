@@ -193,6 +193,7 @@ def write_profile_snapshot(state, initialize=False):
     N = Np1 - 1
     labels = list(state.labels)
     s = len(labels)
+    m_part = state.m_part
 
     # Compute totals on the fly
     from pygtf2.util.interpolate import sum_intensive_loglog, sum_extensive_loglog, interp_intensive_loglog
@@ -207,10 +208,10 @@ def write_profile_snapshot(state, initialize=False):
     rho_tot = sum_intensive_loglog(r_totmid, rmid, state.rho)
     p_tot = sum_intensive_loglog(r_totmid, rmid, state.p)
     eta = np.zeros(N, dtype=np.float64)
-    if s != 1:
+    if s > 1 and np.max(m_part) > np.min(m_part):
         v2_interp = interp_intensive_loglog(r_totmid, rmid, state.v2)
         err = np.zeros(N, dtype=np.float64)
-        compute_eta_multi(state.m_part, np.sqrt(v2_interp), eta, err)   
+        compute_eta_multi(m_part, np.sqrt(v2_interp), eta, err)   
 
     # Build header
     header_cols = [
@@ -318,6 +319,7 @@ def write_time_evolution(state):
 
     labels = list(state.labels)
     s = len(labels)
+    m_part = state.m_part
 
     #--- Compute eta_core on the fly
     from pygtf2.util.interpolate import sum_intensive_loglog, interp_intensive_loglog
@@ -332,10 +334,10 @@ def write_time_evolution(state):
 
     rho_tot = sum_intensive_loglog(r_totmid, rmid, state.rho)
     eta = np.zeros(length, dtype=np.float64)
-    if s != 1:
+    if s > 1 and np.max(m_part) > np.min(m_part):
         v2_interp = interp_intensive_loglog(r_totmid, rmid, state.v2)
         err = np.zeros(length, dtype=np.float64)
-        compute_eta_multi(state.m_part, np.sqrt(v2_interp), eta, err) 
+        compute_eta_multi(m_part, np.sqrt(v2_interp), eta, err) 
     w = rho_tot * (r_tot[1:]**3 - r_tot[:-1]**3) # Mass weighted
     eta_c = np.sum(w*eta) / np.sum(w)
 

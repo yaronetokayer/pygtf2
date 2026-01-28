@@ -55,6 +55,11 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
     fig, ax = plt.subplots(figsize=(7, 5))
     cmap = plt.get_cmap('tab10')
 
+    # Add equipartition line for eta_c
+    if quantity == 'eta_c':
+        ax.axhline(0.5, ls='--', color='grey')
+        ax.text(x=0.1, y=0.49, s='equipartition', horizontalalignment='left', verticalalignment='top', color='grey', fontsize=14)
+
     if quantity in {'rho_c', 'v2_c', 'r_c', 'eta_c','mintrel'}:
         for i, data in enumerate(data_list):
             color = cmap(i % 10)

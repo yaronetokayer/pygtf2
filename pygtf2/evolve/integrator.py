@@ -1,9 +1,10 @@
-import numpy as np
+import numpy as np 
 from collections import deque
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 from pygtf2.evolve.transport import compute_luminosities, conduct_heat
 from pygtf2.evolve.hydrostatic import revirialize_interp
 from pygtf2.evolve.evaporate import evaporate
+from pygtf2.evolve.binaries import binaries_heating
 from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
 
 def run_until_stop(state, start_step, **kwargs):
@@ -43,12 +44,14 @@ def run_until_stop(state, start_step, **kwargs):
     nupdate = int(io.nupdate)
 
     # --- oscillation detection and throttling ---
-    osc_window = 5
-    osc_threshold_on  = 100     # avg spacing < 100 steps → oscillation detected
-    osc_threshold_off = 10_000     # avg spacing > 10k steps → stable again
+    auto = io.write_auto
 
-    min_prof_spacing = 500_000
-    min_tevol_spacing = 100_000
+    osc_window = 5
+    osc_threshold_on  = 10 #  100     # avg spacing < 100 steps → oscillation detected
+    osc_threshold_off = 10_000  # avg spacing > 10k steps → stable again
+
+    min_prof_spacing = 250_000
+    min_tevol_spacing = 50_000
 
     prof_desired_steps = deque(maxlen=osc_window)       # double-ended queue
     tevol_desired_steps = deque(maxlen=osc_window)
@@ -124,83 +127,95 @@ def run_until_stop(state, start_step, **kwargs):
         #########################
 
         # --- PROFILE OUTPUT ---
-        drho_for_prof = abs((rho0 / rho0_last_prof) - 1.0)
+        if auto:
+            drho_for_prof = abs((rho0 / rho0_last_prof) - 1.0)
 
-        # Update desired spacing if criteria satisfied
-        want_prof = (drho_for_prof > drho_prof)
-        if want_prof:
-            prof_desired_steps.append(step_count)
-            avg_spacing_prof = detect_avg_spacing(prof_desired_steps)
+            # Update desired spacing if criteria satisfied
+            want_prof = (drho_for_prof > drho_prof)
+            if want_prof:
+                prof_desired_steps.append(step_count)
+                avg_spacing_prof = detect_avg_spacing(prof_desired_steps)
 
-        # Auto de-throttle (re-enable normal criteria)
-        if prof_force_min and avg_spacing_prof > osc_threshold_off:
-            if chatter:
-                print(f"{step_count}: Profile output throttling disabled (system stabilized)")
-            prof_force_min = False
+            # Auto de-throttle (re-enable normal criteria)
+            if prof_force_min and avg_spacing_prof > osc_threshold_off:
+                if chatter:
+                    print(f"{step_count}: Profile output throttling disabled (system stabilized)")
+                prof_force_min = False
 
-        if prof_force_min:
-            # Throttled mode
-            if prof_last_write is None or (step_count - prof_last_write >= min_prof_spacing):
-                rho0_last_prof = rho0
-                prof_last_write = step_count
-                write_profile_snapshot(state)
+            if prof_force_min:
+                # Throttled mode
+                if prof_last_write is None or (step_count - prof_last_write >= min_prof_spacing):
+                    rho0_last_prof = rho0
+                    prof_last_write = step_count
+                    write_profile_snapshot(state)
+
+            else:
+                # Normal mode
+                if want_prof:
+                    rho0_last_prof = rho0
+                    prof_last_write = step_count
+                    write_profile_snapshot(state)
+
+                    # Detect oscillation
+                    if avg_spacing_prof < osc_threshold_on:
+                        if step_count > osc_threshold_off:
+                            if chatter:
+                                print(f"{step_count}: Profile outputs too rapid — enabling throttling")
+                            prof_force_min = True
 
         else:
-            # Normal mode
-            if want_prof:
-                rho0_last_prof = rho0
+            if prof_last_write is None or (step_count - prof_last_write >= min_prof_spacing):
                 prof_last_write = step_count
                 write_profile_snapshot(state)
-
-                # Detect oscillation
-                if avg_spacing_prof < osc_threshold_on:
-                    if step_count > osc_threshold_off:
-                        if chatter:
-                            print(f"{step_count}: Profile outputs too rapid — enabling throttling")
-                        prof_force_min = True
 
         # --- TIME EVOLUTION OUTPUT ---
-        drho_for_tevol = abs((rho0 / rho0_last_tevol) - 1.0)
-        want_tevol = drho_for_tevol > drho_tevol
+        if auto:
+            drho_for_tevol = abs((rho0 / rho0_last_tevol) - 1.0)
+            want_tevol = drho_for_tevol > drho_tevol
 
-        if use_r50:
-            denom = r50_spread_last_tevol if abs(r50_spread_last_tevol) > 1e-100 else 1e-100
-            r50_spread_for_tevol = abs((r50_spread - r50_spread_last_tevol) / denom)
-            if r50_spread_for_tevol > dr50_tevol:
-                want_tevol = True
+            if use_r50:
+                denom = r50_spread_last_tevol if abs(r50_spread_last_tevol) > 1e-100 else 1e-100
+                r50_spread_for_tevol = abs((r50_spread - r50_spread_last_tevol) / denom)
+                if r50_spread_for_tevol > dr50_tevol:
+                    want_tevol = True
 
-        # Update desired spacing if criteria satisfied
-        if want_tevol:
-            tevol_desired_steps.append(step_count)
-            avg_spacing_tevol = detect_avg_spacing(tevol_desired_steps)
-        
-        # Auto de-throttle
-        if tevol_force_min and avg_spacing_tevol > osc_threshold_off:
-            if chatter:
-                print(f"{step_count}: Time evolution output throttling disabled (system stabilized)")
-            tevol_force_min = False
+            # Update desired spacing if criteria satisfied
+            if want_tevol:
+                tevol_desired_steps.append(step_count)
+                avg_spacing_tevol = detect_avg_spacing(tevol_desired_steps)
+            
+            # Auto de-throttle
+            if tevol_force_min and avg_spacing_tevol > osc_threshold_off:
+                if chatter:
+                    print(f"{step_count}: Time evolution output throttling disabled (system stabilized)")
+                tevol_force_min = False
 
-        if tevol_force_min:     # Throttled mode
-            if tevol_last_write is None or (step_count - tevol_last_write >= min_tevol_spacing):
-                rho0_last_tevol = rho0
-                r50_spread_last_tevol = r50_spread
-                tevol_last_write = step_count
-                write_time_evolution(state)
+            if tevol_force_min:     # Throttled mode
+                if tevol_last_write is None or (step_count - tevol_last_write >= min_tevol_spacing):
+                    rho0_last_tevol = rho0
+                    r50_spread_last_tevol = r50_spread
+                    tevol_last_write = step_count
+                    write_time_evolution(state)
+
+            else:
+                # Normal mode
+                if want_tevol:
+                    rho0_last_tevol = rho0
+                    r50_spread_last_tevol = r50_spread
+                    tevol_last_write = step_count
+                    write_time_evolution(state)
+
+                    # Detect oscillation
+                    if avg_spacing_tevol < osc_threshold_on:
+                        if step_count > osc_threshold_off:
+                            if chatter:
+                                print(f"{step_count}: Time evolution outputs too rapid — enabling throttling")
+                            tevol_force_min = True
 
         else:
-            # Normal mode
-            if want_tevol:
-                rho0_last_tevol = rho0
-                r50_spread_last_tevol = r50_spread
+            if tevol_last_write is None or (step_count - tevol_last_write >= min_tevol_spacing):
                 tevol_last_write = step_count
                 write_time_evolution(state)
-
-                # Detect oscillation
-                if avg_spacing_tevol < osc_threshold_on:
-                    if step_count > osc_threshold_off:
-                        if chatter:
-                            print(f"{step_count}: Time evolution outputs too rapid — enabling throttling")
-                        tevol_force_min = True
 
         ##############
         ### 4. Log ###
@@ -232,6 +247,7 @@ def integrate_time_step(state, dt_prop, step_count):
     char  = state.char
     bkg_param = state.bkg_param
     evap = config.sim.evap
+    binaries = config.sim.binaries
 
     c1 = float(char.c1); c2 = float(char.c2)
     eps_du = float(config.prec.eps_du)
@@ -252,6 +268,10 @@ def integrate_time_step(state, dt_prop, step_count):
     if evap:
         evaporate(r_orig, rmid_orig, m, v2_cond, rho_orig, dt_prop) # Modifies rho and m in place
         p_cond = v2_cond * rho_orig
+
+    # Apply heating
+    if binaries:
+        v2_cond, p_cond, eps_max = binaries_heating(rmid_orig, rho_orig, v2_cond, dt_prop)
 
     ### Step 2: Reestablish hydrostatic equilibrium ###
     status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m, bkg_param)

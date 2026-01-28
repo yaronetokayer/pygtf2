@@ -25,12 +25,13 @@ class SimParams:
     def __init__(
             self, 
             t_halt : float = 1000.0,
-            rho_c_halt : float = 1500,
+            rho_c_halt : float = 1.0e8,
             lnL_param : float = 0.11,
             alpha : float = 1.217,
             beta : float = 1.0,
             b : float = 0.45,
             evap : bool = False,
+            binaries : bool = False,
             bkg: dict | None = None,
     ):
         self._t_halt = None
@@ -40,6 +41,7 @@ class SimParams:
         self._beta = None
         self._b = None
         self._evap = None
+        self._binaries = None
         self._bkg = dict(self.DEFAULT_BKG)
 
         self.t_halt = t_halt
@@ -49,6 +51,7 @@ class SimParams:
         self.beta = beta
         self.b = b
         self.evap = evap
+        self.binaries = binaries
         if bkg is not None:
             self.bkg = bkg
 
@@ -121,6 +124,16 @@ class SimParams:
         if not isinstance(value, (bool, int)) or (isinstance(value, int) and value not in (0, 1)):
             raise ValueError("evap must be a bool (True/False) or int (0/1)")
         self._evap = bool(value)
+
+    @property
+    def binaries(self):
+        return self._binaries
+
+    @binaries.setter
+    def binaries(self, value):
+        if not isinstance(value, (bool, int)) or (isinstance(value, int) and value not in (0, 1)):
+            raise ValueError("binaries must be a bool (True/False) or int (0/1)")
+        self._binaries = bool(value)
 
     @property
     def bkg(self):

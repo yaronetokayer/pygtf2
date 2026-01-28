@@ -1,4 +1,4 @@
-import numpy as np
+import numpy as np 
 from numba import njit, types, float64
 from pygtf2.util.interpolate import sum_intensive_loglog_single, interp_intensive_loglog
 from pygtf2.profiles.bkg_pot import hernq_static
@@ -57,7 +57,12 @@ def compute_eta_multi(masses, sigmas, eta_out, err_out):
         cov = 0.0
         for i in range(s):
             cov += (x[i] - x_mean) * (y[i, j] - y_mean[j])
-        eta_out[j] = -cov / var
+
+        # Protect against division by zero
+        if var > 0.0:
+            eta_out[j] = -cov / var
+        else:
+            eta_out[j] = 0.0
 
     # compute RMS error
     for j in range(N):
@@ -228,7 +233,7 @@ def calc_rho_v2_r_c(rmid, rho, v2):
 
     rho_c = sum_intensive_loglog_single(r0, rmid, rho)
 
-    v2_c = sum_intensive_loglog_single(r0, rmid, v2)
+    v2_c = sum_intensive_loglog_single(r0, rmid, rho*v2) / rho_c # Mass-weighted average
 
     # Should be good estimate within order unity, based on exact result from a King profile
     r_c = np.sqrt( v2_c / rho_c )  

@@ -118,7 +118,7 @@ class State:
 
         make_dir(state)                                  # Create the model directory if it doesn't exist
         write_metadata(state)                            # Write model metadata to disk
-        write_profile_snapshot(state, initialize=True)   # Write initial snapshot to disk
+        # write_profile_snapshot(state, initialize=True)   # Write initial snapshot to disk
 
         return state
 
@@ -701,7 +701,7 @@ class State:
             kwargs['rho_c'] = rho_c
 
         # Write initial state to disk 
-        write_profile_snapshot(self)
+        write_profile_snapshot(self) # , initialize=True) 
         write_time_evolution(self)
         write_log_entry(self, start_step)
 

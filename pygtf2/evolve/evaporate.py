@@ -113,7 +113,7 @@ def evaporate(r, rmid, m, v2, rho, dt):
                 t_cross = rm / sig
                 t_evap  = t_cross / fk_esc
 
-                param = 1e6
+                param = 1e9
                 rho[i, j] = rho_ij * (1.0 -  param * dt / t_evap)
             # else: do nothing
 
