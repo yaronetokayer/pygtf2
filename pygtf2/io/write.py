@@ -211,7 +211,17 @@ def write_profile_snapshot(state, initialize=False):
     if s > 1 and np.max(m_part) > np.min(m_part):
         v2_interp = interp_intensive_loglog(r_totmid, rmid, state.v2)
         err = np.zeros(N, dtype=np.float64)
-        compute_eta_multi(m_part, np.sqrt(v2_interp), eta, err)   
+        compute_eta_multi(m_part, np.sqrt(v2_interp), eta, err)
+    
+    # apply eta overlap mask
+    r_min_k = np.min(r[:, 1:], axis=1)
+    r_max_k = np.max(r[:, 1:], axis=1)
+
+    r_min_overlap = np.max(r_min_k)
+    r_max_overlap = np.min(r_max_k)
+
+    valid = (r_totmid >= r_min_overlap) & (r_totmid <= r_max_overlap)
+    eta[~valid] = np.nan
 
     # Build header
     header_cols = [
