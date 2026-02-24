@@ -118,7 +118,7 @@ class State:
 
         make_dir(state)                                  # Create the model directory if it doesn't exist
         write_metadata(state)                            # Write model metadata to disk
-        # write_profile_snapshot(state, initialize=True)   # Write initial snapshot to disk
+        write_profile_snapshot(state, initialize=True)   # Write initial snapshot to disk
 
         return state
 
@@ -368,6 +368,7 @@ class State:
         #--- Set luminosity calculation parameter ---
         char.c1 = 1.0 / np.sqrt(3.0 * np.pi)
         char.c2 = (np.sqrt(2.0) / 9.0) * sim.alpha * sim.beta * sim.b
+        print(char.c2)
 
         return char  # Store the CharParams object in config
 
@@ -641,7 +642,7 @@ class State:
         """
         Resets initial state
         """
-        from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
+        from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread, mass_fraction_radii, compute_rc_frac
 
         config = self.config
         prec = config.prec
@@ -657,9 +658,20 @@ class State:
         self.dt = 1e-7                      # Initial time step (will be updated adaptively)
         self.du_max = prec.eps_du           # Initialize the max du to upper limit
 
+        # Species r50 drift metric
+        s = config.s
+        self.r50evo = np.zeros((s, 2))
+        frac = np.array([0.5])
+        for k in range(s):
+            self.r50evo[k,0] = mass_fraction_radii(self.r[k], self.m[k], frac)[0]
+
         self.mintrelax                  = float(np.min(self.trelax))
         self.rho_c, self.v2_c, self.r_c = calc_rho_v2_r_c(self.rmid, self.rho, self.v2)
-        self.r50_spread                 = calc_r50_spread(self.r, self.m)
+        self.r50_spread                 = calc_r50_spread(self.r, self.m, self.r50evo)
+
+        # Species core-dominance metric
+        self.rc_frac = np.zeros(s)
+        compute_rc_frac(self.r, self.m, self.r_c, self.rc_frac)
 
         # For diagnostics
         self.dt_cum = 0.0
@@ -701,7 +713,7 @@ class State:
             kwargs['rho_c'] = rho_c
 
         # Write initial state to disk 
-        write_profile_snapshot(self) # , initialize=True) 
+        write_profile_snapshot(self) 
         write_time_evolution(self)
         write_log_entry(self, start_step)
 

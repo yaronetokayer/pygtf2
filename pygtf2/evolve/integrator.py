@@ -5,7 +5,7 @@ from pygtf2.evolve.transport import compute_luminosities, conduct_heat
 from pygtf2.evolve.hydrostatic import revirialize_interp
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binaries_heating
-from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
+from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread, compute_rc_frac
 
 def run_until_stop(state, start_step, **kwargs):
     """
@@ -297,7 +297,8 @@ def integrate_time_step(state, dt_prop, step_count):
 
     state.mintrelax                     = float(np.min(state.trelax))
     state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(rmid, rho_new, v2_new)
-    state.r50_spread                    = calc_r50_spread(r_new, m)
+    state.r50_spread                    = calc_r50_spread(r_new, m, state.r50evo)
+    compute_rc_frac(r_new, m, state.r_c, state.rc_frac)
 
     # Diagnostics
     state.dt_cum += float(dt_prop)

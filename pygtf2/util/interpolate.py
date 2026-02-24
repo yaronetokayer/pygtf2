@@ -275,6 +275,87 @@ def sum_extensive_loglog(r0, r, x) -> np.ndarray:
 
     return out
 
+import numpy as np
+from numba import njit, float64, int64
+
+@njit(float64[:](float64[:], float64[:, :], float64[:, :], int64), fastmath=True, cache=True)
+def interp_species_loglog(r0, r, x, k):
+    """
+    Log–log (piecewise power-law) interpolation/extrapolation of x[k] from r[k] onto r0.
+
+    Parameters
+    ----------
+    r0 : (M,) float64
+        Target edge radii.
+    r  : (s, N+1) float64
+        Per-species edge radii (monotone nondecreasing per row; r[:,0] may be 0).
+    x  : (s, N+1) float64
+        Per-species values defined at the same edges as r. Must be > 0 for log–log.
+    k  : int
+        Species index to interpolate.
+
+    Returns
+    -------
+    out : (M,) float64
+        Interpolated/extrapolated x[k] evaluated at r0.
+    """
+    # Pull the selected species
+    rj = r[k]
+    xj = x[k]
+
+    Np1 = rj.shape[0]
+    N = Np1 - 1
+    M = r0.shape[0]
+
+    out = np.empty(M, dtype=np.float64)
+
+    has_zero_edge = (rj[0] == 0.0)
+
+    for t in range(M):
+        rt = r0[t]
+        rt_eval = rt if rt > 0.0 else 1e-300  # guard for log(rt)
+
+        # Binary search: find j1 such that rj[j1] <= rt < rj[j1+1]
+        lo = 0
+        hi = N
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if rj[mid] <= rt:
+                lo = mid + 1
+            else:
+                hi = mid
+        j1 = lo - 1
+        if j1 < 0:
+            j1 = 0
+        elif j1 > N - 1:
+            j1 = N - 1
+
+        # Avoid log(0) for inward extrapolation when the innermost edge is 0
+        if j1 == 0 and has_zero_edge:
+            # assumes N >= 2
+            r_lo = rj[1]
+            r_hi = rj[2]
+            x_lo = xj[1]
+            x_hi = xj[2]
+        else:
+            r_lo = rj[j1]
+            r_hi = rj[j1 + 1]  # j1 is clamped to <= N-1 so this is safe
+            x_lo = xj[j1]
+            x_hi = xj[j1 + 1]
+
+            # extra safety if r_lo is still zero
+            if r_lo == 0.0 and has_zero_edge:
+                r_lo = rj[1]
+                r_hi = rj[2]
+                x_lo = xj[1]
+                x_hi = xj[2]
+
+        # Log–log power-law interpolation/extrapolation
+        a = (np.log(x_hi) - np.log(x_lo)) / (np.log(r_hi) - np.log(r_lo))
+        out[t] = x_lo * np.exp(a * np.log(rt_eval / r_lo))
+
+    return out
+
 @njit(float64(float64, float64[:, :], float64[:, :]), fastmath=True, cache=True)
 def sum_intensive_loglog_single(rmid0, rmid, x) -> float:
     """
@@ -295,6 +376,17 @@ def sum_extensive_loglog_single(r0, r, x) -> float:
     tmp = np.empty(1, dtype=np.float64)
     tmp[0] = r0
     out = sum_extensive_loglog(tmp, r, x)
+    return out[0]
+
+@njit(float64(float64, float64[:, :], float64[:, :], int64), fastmath=True, cache=True)
+def interp_species_loglog_single(r0, r, x, k) -> float:
+    """
+    Numba-optimized single-value wrapper for interp_species_loglog.
+    Returns the summed extensive quantity at a single edge radius.
+    """
+    tmp = np.empty(1, dtype=np.float64)
+    tmp[0] = r0
+    out = interp_species_loglog(tmp, r, x, k)
     return out[0]
 
 @njit(float64[:](int64, float64[:, :], float64[:, :]),fastmath=True,cache=True)

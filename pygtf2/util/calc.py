@@ -1,6 +1,6 @@
 import numpy as np 
 from numba import njit, types, float64
-from pygtf2.util.interpolate import sum_intensive_loglog_single, interp_intensive_loglog
+from pygtf2.util.interpolate import sum_intensive_loglog_single, interp_intensive_loglog, sum_extensive_loglog_single, interp_species_loglog_single
 from pygtf2.profiles.bkg_pot import hernq_static
  
 @njit((float64[:], float64[:, :], float64[:], float64[:]), fastmath=True, cache=True)
@@ -309,25 +309,72 @@ def mass_fraction_radii(r_edges, m_edges, fracs):
             out[i] = r0 + t * (r1 - r0)
     return out
 
-@njit(float64(float64[:, :], float64[:, :]), fastmath=True, cache=True)
-def calc_r50_spread(r, m):
+@njit(float64(float64[:, :], float64[:, :], float64[:, :]), fastmath=True, cache=True)
+def calc_r50_spread(r, m, r50evo):
     """
     Compute a simple segregation metric:
         spread = (max(r50) - min(r50)) / mean(r50)
-    r : array-like, shape (n_species, ...)
+
+    Also update S_k = r_{50,k}(t)/r_{50,k}(0), in place.
+
+    Arguments
+    ---------
+    r : array-like, shape (s, N+1)
         Radii arrays per species
-    m : array-like, shape (n_species, ...)
+    m : array-like, shape (s, N+1)
         Mass arrays per species
+    s_k : array-like, shape (s, 2)
+        [k,0] is initial r_50 for species k and [k,1] is the the S_k value
+
     Returns
     -------
     spread : float
         Dimensionless measure of segregation (0 = none)
     """
     s, _ = r.shape
-    r_50 = np.empty(s, dtype=np.float64)
+
+    if s < 2:
+        return 0.0
+
     frac = np.array([0.5])
 
-    for k in range(s):
-        r_50[k] = mass_fraction_radii(r[k], m[k], frac)[0]
+    r50_min = 1.0e308
+    r50_max = -1.0e308
+    r50_sum = 0.0
 
-    return (r_50.max() - r_50.min()) / r_50.mean()
+    for k in range(s):
+        r_50_k      = mass_fraction_radii(r[k], m[k], frac)[0]
+        r50_sum += r_50_k
+
+        if r_50_k < r50_min:
+            r50_min = r_50_k
+        if r_50_k > r50_max:
+            r50_max = r_50_k
+
+        r50evo[k,1]    = r_50_k/r50evo[k,0]
+        
+    r50_mean = r50_sum / s
+
+    return (r50_max - r50_min) / r50_mean
+
+@njit((float64[:, :], float64[:, :], float64, float64[:]), fastmath=True, cache=True)
+def compute_rc_frac(r, m, r_c, rc_frac):
+    """
+    Compute f_k = M_k(<r_c)/Mtot(<r_c) for each species, in place
+
+    Arguments
+    ---------
+    r : array-like, shape (s, N+1)
+        Radii arrays per species
+    m : array-like, shape (s, N+1)
+        Mass arrays per species
+    r_c : float
+        Core radius
+    f_k : array-like, shape (s,)
+        f_k for each species
+    """
+    s, _ = r.shape
+
+    denom = sum_extensive_loglog_single(r_c, r, m)
+    for k in range(s):
+        rc_frac[k] = interp_species_loglog_single(r_c, r, m, k) / denom

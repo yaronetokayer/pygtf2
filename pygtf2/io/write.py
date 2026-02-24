@@ -186,6 +186,22 @@ def write_profile_snapshot(state, initialize=False):
     io = state.config.io
     filename = os.path.join(io.base_dir, io.model_dir, f"profile_{state.snapshot_index}.dat")
 
+    # If not initializing, remove any higher-index snapshot files
+    if not initialize:
+        snapshot_dir = os.path.join(io.base_dir, io.model_dir)
+
+        for fname in os.listdir(snapshot_dir):
+            if not fname.startswith("profile_") or not fname.endswith(".dat"):
+                continue
+
+            try:
+                idx = int(fname[len("profile_"):-len(".dat")])
+            except ValueError:
+                continue  # ignore unexpected files
+
+            if idx > state.snapshot_index:
+                os.remove(os.path.join(snapshot_dir, fname))
+
     # Use species 0 for the r columns.
     r = state.r
     rmid = state.rmid
@@ -372,6 +388,8 @@ def write_time_evolution(state):
             f"{f'r20[{name}]':>13}",
             f"{f'r50[{name}]':>13}",
             f"{f'r90[{name}]':>13}",
+            f"{f'r50evo[{name}]':>13}",
+            f"{f'rc_frac[{name}]':>13}",
         ])
     header = "  ".join(header) + "\n"
 
@@ -391,8 +409,12 @@ def write_time_evolution(state):
     rho = state.rho
     r = state.r
     m = state.m
+    r50evo = state.r50evo[:,1]
+    rc_frac = state.rc_frac
     for k, name in enumerate(labels):
         rho_c_k = float(rho[k, 0])
+        r50evok = r50evo[k]
+        rc_frack = rc_frac[k]
 
         # Expecting: array([r_1%, r_5%, r_10%, r_20%, r_50%, r_90%]) in code units
         radii = np.asarray(mass_fraction_radii(r[k], m[k], percents), dtype=np.float64)
@@ -405,6 +427,8 @@ def write_time_evolution(state):
             f"{radii[3]: 13.6e}",
             f"{radii[4]: 13.6e}",
             f"{radii[5]: 13.6e}",
+            f"{r50evok: 13.6e}",
+            f"{rc_frack: 13.6e}",
         ])
 
     new_line = "  ".join(row) + "\n"
