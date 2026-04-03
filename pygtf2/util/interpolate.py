@@ -1,5 +1,5 @@
 import numpy as np
-from numba import njit, float64, int64
+from numba import njit, float64, int64, void
 
 @njit(float64[:](float64[:], float64[:]), fastmath=True, cache=True)
 def interp_linear_to_interfaces(r_edges_1d, q_cells_1d) -> np.ndarray:
@@ -389,34 +389,35 @@ def interp_species_loglog_single(r0, r, x, k) -> float:
     out = interp_species_loglog(tmp, r, x, k)
     return out[0]
 
-@njit(float64[:](int64, float64[:, :], float64[:, :]),fastmath=True,cache=True)
-def interp_m_enc(k, r, m) -> np.ndarray:
+@njit(
+    void(int64, float64[:, :], float64[:, :], float64[:]), fastmath=True, cache=True,
+)
+def interp_m_enc(k, r, m, m_tot_on_k):
     """
-    Total enclosed mass on species-k radial grid using piecewise power-law (log–log)
-    interpolation for other species, with constant extension beyond their max radius.
+    Fill m_tot_on_k with total enclosed mass evaluated on species-k radial grid,
+    using piecewise power-law (log-log) interpolation for other species and
+    power-law extrapolation beyond their maximum radius.
 
     Parameters
     ----------
     k : int
         Species index (0 <= k < s).
     r : (s, N+1) float64
-        Edge radii per species. r[:,0] = 0, r[:,1:] > 0, nondecreasing per row.
+        Edge radii per species.
     m : (s, N+1) float64
-        Enclosed mass per species at edges. m[:,0] = 0, typically nondecreasing.
-
-    Returns
-    -------
+        Enclosed mass per species at edges.
     m_tot_on_k : (N+1,) float64
-        Total enclosed mass evaluated on r[k].
+        Preallocated output buffer. Filled in place.
     """
     s, Np1 = r.shape
     N = Np1 - 1
 
     rk = r[k]  # view (N+1,)
 
-    # start with species k's own contribution
-    m_tot_on_k = m[k].copy()
-    m_tot_on_k[0] = 0.0  # exact zero at origin
+    # Start with species k's own contribution
+    for t in range(Np1):
+        m_tot_on_k[t] = m[k, t]
+    m_tot_on_k[0] = 0.0
 
     # accumulate contributions from other species
     for j in range(s):
@@ -429,18 +430,15 @@ def interp_m_enc(k, r, m) -> np.ndarray:
         m_last = mj[N]
         rj_max = rj[N]
 
-        for t in range(Np1):
+        for t in range(1, Np1):
             x = rk[t]
-            if t == 0 or x == 0.0:
-                # r=0 -> no additional mass; logs would be undefined
-                continue
 
-            # constant tail beyond species j's maximum radius
+            # Constant tail beyond species j's maximum radius
             # if x >= rj_max:
             #     m_tot_on_k[t] += m_last
             #     continue
 
-            # power-law extrapolation beyond species j's maximum radius
+            # Power-law extrapolation beyond species j's maximum radius
             if x >= rj_max:
                 r0 = rj[N-1]; r1 = rj[N]
                 m0 = mj[N-1]; m1 = mj[N]
@@ -453,8 +451,8 @@ def interp_m_enc(k, r, m) -> np.ndarray:
                 m_tot_on_k[t] += m_ext
                 continue
 
-            # locate j1 such that rj[j1] <= x < rj[j1+1]
-            # clamp to avoid using r=0 bin (j1>=1) and to keep j1<=N-1
+            # Locate j1 such that rj[j1] <= x < rj[j1+1]
+            # Clamp so j1 >= 1 and j1 <= N-1, avoiding the origin in log space
             lo = 1
             hi = N  # invariant: search in [lo, hi)
             while lo < hi:
@@ -463,6 +461,7 @@ def interp_m_enc(k, r, m) -> np.ndarray:
                     lo = mid + 1
                 else:
                     hi = mid
+
             j1 = lo - 1
             if j1 < 1:
                 j1 = 1
@@ -474,11 +473,14 @@ def interp_m_enc(k, r, m) -> np.ndarray:
             m0 = mj[j1]
             m1 = mj[j1 + 1]
 
-            # piecewise power-law interpolation in log–log space
-            a = (np.log(m1) - np.log(m0)) / (np.log(r1) - np.log(r0))
-            m_interp = m0 * np.exp(a * np.log(x / r0))
+            # Interior piecewise power-law interpolation in log-log space
+            # Fall back to constant if logs would be unsafe
+            if r0 > 0.0 and m0 > 0.0 and m1 > 0.0 and r1 > r0:
+                a = (np.log(m1) - np.log(m0)) / (np.log(r1) - np.log(r0))
+                m_interp = m0 * np.exp(a * np.log(x / r0))
+            else:
+                m_interp = m0
 
             m_tot_on_k[t] += m_interp
 
     m_tot_on_k[0] = 0.0
-    return m_tot_on_k

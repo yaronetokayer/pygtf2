@@ -1,6 +1,7 @@
-import numpy as np
-from numba import njit, float64, types
+import numpy as np 
+from numba import njit, float64, types, void
 from pygtf2.util.interpolate import interp_linear_to_interfaces
+from pygtf2.util.calc import solve_tridiagonal_thomas
 
 @njit(
     float64[:, :](float64, float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:,:]),
@@ -242,3 +243,320 @@ def conduct_heat(m, u, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1) -> tuple[np.
             p_new[n, i] = (2.0 / 3.0) * rho[n, i] * u_new[n, i]
 
     return p_new, v2_new, float(dumax), float(dt_eff)
+
+### NEW IMPLICIT METHOD
+
+@njit(
+    types.Tuple((float64, float64))(
+        float64[:, :],   # u        (in/out)
+        float64[:, :],   # rho
+        float64[:, :],   # lnL
+        float64[:],      # mrat
+        float64[:, :],   # r
+        float64[:, :],   # du_work
+        float64,         # dt_prop
+        float64,         # eps_du
+        float64          # c1
+    ),
+    cache=True
+)
+def heat_exchange(u, rho, lnL, mrat, r, du_work, dt_prop, eps_du, c1):
+    """
+    Apply only the inter-species heat exchange step, updating u in place.
+
+    This routine:
+      1. Computes the inter-species heat exchange contribution only
+         (no intra-species conduction).
+      2. Forms du = dudt_hex * dt_prop into du_work.
+      3. Applies the adaptive limiter so that max(|du/u|) <= eps_du
+         up to the 0.95 safety factor.
+      4. Updates u in place.
+      5. Returns (du_max, dt_eff).
+
+    Parameters
+    ----------
+    u : ndarray, shape (s, N)
+        Specific internal energy per cell for each species.
+        Updated in place.
+    rho : ndarray, shape (s, N)
+        Density per cell for each species.
+    lnL : ndarray, shape (s, s)
+        Inter-species coupling coefficients.
+    mrat : ndarray, shape (s,)
+        Mass-ratio-like coefficient for each species.
+    r : ndarray, shape (s, N+1)
+        Radial cell interfaces for each species.
+    du_work : ndarray, shape (s, N)
+        Workspace array used to store du before updating u.
+    dt_prop : float
+        Proposed timestep.
+    eps_du : float
+        Maximum allowed relative change in u.
+    c1 : float
+        Multiplicative constant for inter-species exchange term.
+
+    Returns
+    -------
+    du_max : float
+        Realized maximum relative change in u after any limiter scaling.
+    dt_eff : float
+        Effective timestep after any limiter scaling.
+    """
+
+    s, N = u.shape
+
+    # Zero workspace: this will hold du = dudt_hex * dt_prop
+    for n in range(s):
+        for i in range(N):
+            du_work[n, i] = 0.0
+
+    # ---------- inter-species heat exchange only ----------
+    for n in range(s):
+        mrn = mrat[n]
+
+        # precompute r^3 for species n
+        rn3 = np.empty(N + 1, dtype=np.float64)
+        for i in range(N + 1):
+            rr = r[n, i]
+            rn3[i] = rr * rr * rr
+
+        for k in range(s):
+            if k == n:
+                continue
+
+            lnL_nk = lnL[n, k]
+            mrk = mrat[k]
+
+            # precompute r^3 for species k
+            rk3 = np.empty(N + 1, dtype=np.float64)
+            for j in range(N + 1):
+                rr = r[k, j]
+                rk3[j] = rr * rr * rr
+
+            # two-pointer overlap sweep
+            i = 0
+            j = 0
+            while i < N and j < N:
+                rn_lo = r[n, i]
+                rn_hi = r[n, i + 1]
+                rk_lo = r[k, j]
+                rk_hi = r[k, j + 1]
+
+                if rk_hi <= rn_lo:
+                    j += 1
+                    continue
+                if rn_hi <= rk_lo:
+                    i += 1
+                    continue
+
+                rrmin = rn_lo if rn_lo >= rk_lo else rk_lo
+                rrmax = rn_hi if rn_hi <= rk_hi else rk_hi
+
+                rrmin3 = rrmin * rrmin * rrmin
+                rrmax3 = rrmax * rrmax * rrmax
+
+                vol_n_r3 = rn3[i + 1] - rn3[i]
+                if vol_n_r3 > 0.0:
+                    dvol_overlap_r3 = rrmax3 - rrmin3
+                    if dvol_overlap_r3 > 0.0:
+                        vol_ratio = dvol_overlap_r3 / vol_n_r3
+
+                        un = u[n, i]
+                        uk = u[k, j]
+                        denom = uk + un
+                        if denom > 0.0:
+                            root = np.sqrt(denom)
+                            inv_p32 = 1.0 / (denom * root)
+                            du_work[n, i] += (
+                                c1
+                                * lnL_nk
+                                * rho[k, j]
+                                * vol_ratio
+                                * (mrk * uk - mrn * un)
+                                * inv_p32
+                                * dt_prop
+                            )
+
+                if rn_hi <= rk_hi:
+                    i += 1
+                else:
+                    j += 1
+
+    # ---------- adaptive limiter on max relative change ----------
+    floor = 1e-40
+    du_max = 0.0
+
+    for n in range(s):
+        for i in range(N):
+            denom = abs(u[n, i])
+            if denom < floor:
+                denom = floor
+            rat = abs(du_work[n, i]) / denom
+            if rat > du_max:
+                du_max = rat
+
+    dt_eff = dt_prop
+    if du_max > eps_du:
+        scale = 0.95 * (eps_du / du_max)
+        for n in range(s):
+            for i in range(N):
+                du_work[n, i] *= scale
+        du_max *= scale
+        dt_eff = dt_prop * scale
+
+    # ---------- update u in place ----------
+    for n in range(s):
+        for i in range(N):
+            u[n, i] += du_work[n, i]
+
+    return float(du_max), float(dt_eff)
+
+@njit(
+    void(
+        float64[:],  # a
+        float64[:],  # b
+        float64[:],  # c
+        float64[:],  # d
+        float64[:],  # rk
+        float64[:],  # mk
+        float64[:],  # rhok_int
+        float64[:],  # uk
+        float64,     # pref
+        float64      # dt
+    ),
+    cache=True,
+    fastmath=True
+)
+def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
+    """
+    Construct tridiagonal coefficients: a_i du_i-1 + b_i du_i + c_i du_i+1 = d_i
+    a, b, c, and d are updated in place
+
+    Arguments
+    ---------
+    a : ndarray, shape (N,)
+        Subdiagonal coefficients (multiply du_{i-1}) for interior nodes j=1..N.
+    b : ndarray, shape (N,)
+        Main diagonal coefficients (multiply du_i) for interior nodes.
+    c : ndarray, shape (N,)
+        Superdiagonal coefficients (multiply d_{u+1}) for interior nodes.
+    d : ndarray, shape (N,)
+        Right-hand side vector for the interior nodes.
+    rk : ndarray, shape (N+1,)
+        Edge radii.
+    mk : ndarray, shape (N+1,)
+        Enclosed mass at edges.
+    rhok_int : ndarray, shape (N-1,)
+        Densities interpolated to shell edges
+    uk : ndarray, shape (N,)
+        Specific internal energy.
+    pref : float
+        prefactor for species k
+    dt : float
+        timestep
+    """
+    drc     = 0.5 * (rk[2:] - rk[:-2])      # (N-1,)
+    delu    = uk[1:] - uk[:-1]              # (N-1,)
+    su      = uk[1:] + uk[:-1]              # (N-1,)
+    sqrt2   = 1.41421356237309
+
+    # Interior cells
+    facL    = rhok_int[:-1] * rk[1:-2]**2 / drc[:-1]
+    facR    = rhok_int[1:] * rk[2:-1]**2 / drc[1:]
+    su12L   = 1 / np.sqrt(su[:-1])
+    su12R   = 1 / np.sqrt(su[1:])
+    dusu32L = 0.5 * delu[:-1] / su[:-1]**(3.0/2.0)
+    dusu32R = 0.5 * delu[1:] / su[1:]**(3.0/2.0)
+
+    a[1:-1] = facL * ( su12L + dusu32L )
+    b[1:-1] = -1 * (
+        facR * ( su12R + dusu32R )
+        + facL * ( su12L - dusu32L )
+        + ( ( mk[2:-1] - mk[1:-2] ) / ( sqrt2 * pref * dt ) )
+    )
+    c[1:-1] = facR * ( su12R - dusu32R )
+    d[1:-1] = (
+        facL * delu[:-1] / np.sqrt(su[:-1])
+        - facR * delu[1:] / np.sqrt(su[1:])
+    )
+
+    # i = 1
+    a[0] = 0.0
+    b[0] = -1 *  (
+        su12L[0] + dusu32L[0]
+        + ( mk[1] * drc[0] / ( rhok_int[0] * rk[1]**2 * pref * sqrt2 * dt ) )
+    )
+    c[0] = su12L[0] - dusu32L[0]
+    d[0] = - delu[0] / np.sqrt(su[0])
+
+    # i = N
+    a[-1] = su12R[-1] + dusu32R[-1]
+    b[-1] = (
+        dusu32R[-1] - su12R[-1]
+        - ( 
+            (mk[-1] - mk[-2]) * drc[-1] 
+            / ( rhok_int[-1] * rk[-2]**2 * pref * sqrt2 * dt )
+        )
+    )
+    c[-1] = 0.0
+    d[-1] = delu[-1] / np.sqrt(su[-1])
+
+# @njit(
+#     types.Tuple((float64, float64))(
+#         float64[:, :],  # u
+#         float64[:, :],  # rho
+#         float64[:, :],  # r
+#         float64[:, :],  # m
+#         float64,        # c2
+#         float64[:],     # mrat
+#         float64[:, :],  # lnL
+#         float64,        # dt
+#         float64         # eps_du
+#     ),
+#     cache=True,
+#     fastmath=True
+# )
+def conduct_implicit(u, rho, r, m, c2, mrat, lnL, dt, eps_du):
+    """
+    For each species, solve tridiagonal system to perform implicit
+    conduction step.
+    The tridiagonal system is defined by:
+        a_i du_i-1 + b_i du_i + c_i du_i+1 = d_i
+    u is updated in-place.
+    """
+    s, N = u.shape
+
+    # Allocate a, b, c, d, du
+    a  = np.empty(N, dtype=np.float64)
+    b  = np.empty(N, dtype=np.float64)
+    c  = np.empty(N, dtype=np.float64)
+    d  = np.empty(N, dtype=np.float64)
+    du = np.empty(N, dtype=np.float64)
+
+    while True:
+        dumax = 0.0
+        for k in range(s):
+            rk          = r[k]
+            mk          = m[k]
+            rhok        = rho[k]
+            uk          = u[k]
+            rhok_int    = interp_linear_to_interfaces(rk, rhok)
+
+            pref        = (-c2) * (mrat[k] * lnL[k,k])
+
+            build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt)
+            solve_tridiagonal_thomas(a, b, c, d, du)
+
+            u[k] += du
+
+            dumaxk = np.max(np.abs(du / uk) )
+            if dumaxk > dumax:
+                dumax = dumaxk
+
+        if dumax > eps_du:
+            dt *= 0.1 * eps_du / dumax
+            continue
+        else:
+            break
+
+    return float(dumax), float(dt)

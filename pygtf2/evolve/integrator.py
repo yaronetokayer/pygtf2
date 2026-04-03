@@ -1,8 +1,8 @@
 import numpy as np 
 from collections import deque
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
-from pygtf2.evolve.transport import compute_luminosities, conduct_heat
-from pygtf2.evolve.hydrostatic import revirialize_interp
+from pygtf2.evolve.transport import compute_luminosities, conduct_heat, heat_exchange, conduct_implicit
+from pygtf2.evolve.hydrostatic import revirialize_interp, STATUS_OK, STATUS_SHELL_CROSSING
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binaries_heating
 from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread, compute_rc_frac
@@ -254,56 +254,67 @@ def integrate_time_step(state, dt_prop, step_count):
     mrat = state.mrat
     lnL = char.lnL
 
-    r_orig      = np.asarray(state.r,   dtype=np.float64)
+    r           = np.asarray(state.r,   dtype=np.float64)
     rmid_orig   = np.asarray(state.rmid,   dtype=np.float64)
     m           = np.asarray(state.m,   dtype=np.float64)
+    # u           = 1.5 * np.asarray(state.v2,  dtype=np.float64) # For the new conduction approach
     u_orig      = 1.5 * np.asarray(state.v2,  dtype=np.float64)
-    rho_orig    = np.asarray(state.rho, dtype=np.float64)
+    rho         = np.asarray(state.rho, dtype=np.float64)
 
     ### Step 1: Energy transport ###
-    lum = compute_luminosities(c2, r_orig, u_orig, rho_orig, mrat, lnL)
-    p_cond, v2_cond, du_max, dt_prop = conduct_heat(m, u_orig, rho_orig, lum, lnL, mrat, r_orig, dt_prop, eps_du, c1)
+
+    # TESTING NEW IMPLICIT METHOD
+    # du_work         = np.empty_like(u)          # Maybe move elsewhere since we don't need to reallocate each time step
+    # du_max, dt_prop = heat_exchange(u, rho_orig, lnL, mrat, r_orig, du_work, dt_prop, eps_du, c1)   # This does an explicit update in place, for intermediate u values after heat exchange
+    # du_max, dt_prop = conduct_implicit(u, rho_orig, r_orig, m, c2, mrat, lnL, dt_prop, eps_du)
+    
+    # v2_cond   = (2.0 / 3.0) * u
+    # p         = v2_cond * rho_orig
+
+    # OLD METHOD
+    lum = compute_luminosities(c2, r, u_orig, rho, mrat, lnL)
+    p, v2_cond, du_max, dt_prop = conduct_heat(m, u_orig, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1)
 
     # Apply evaporation
     if evap:
-        evaporate(r_orig, rmid_orig, m, v2_cond, rho_orig, dt_prop) # Modifies rho and m in place
-        p_cond = v2_cond * rho_orig
+        evaporate(r, rmid_orig, m, v2_cond, rho, dt_prop) # Modifies rho and m in place
+        p = v2_cond * rho
 
     # Apply heating
     if binaries:
-        v2_cond, p_cond, eps_max = binaries_heating(rmid_orig, rho_orig, v2_cond, dt_prop)
+        v2_cond, p, eps_max = binaries_heating(rmid_orig, rho, v2_cond, dt_prop)
 
     ### Step 2: Reestablish hydrostatic equilibrium ###
-    status, r_new, rho_new, p_new, dr_max, he_res = revirialize_interp(r_orig, rho_orig, p_cond, m, bkg_param)
+    status = revirialize_interp(r, rho, p, m, bkg_param) # Modifies r, rho, p in place
         
     # Shell crossing
-    if status == 'shell_crossing':
+    if status == STATUS_SHELL_CROSSING:
         raise RuntimeError(f"Step {step_count}: Shell crossing in conduction/revirialization step")
 
     ### Step 3: Update state variables ###
 
-    state.r = r_new
-    state.rho = rho_new
-    state.p = p_new
-    v2_new = p_new / rho_new
-    state.v2 = v2_new
-    state.du_max = du_max
+    state.r         = r
+    state.rho       = rho
+    state.p         = p
+    v2_new          = p / rho
+    state.v2        = v2_new
+    state.du_max    = du_max
     if evap:
         state.m = m
 
-    rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-    state.rmid = rmid
-    state.trelax = v2_new**(3.0/2.0) / rho_new
+    rmid            = 0.5 * (r[:, 1:] + r[:, :-1])
+    state.rmid      = rmid
+    state.trelax    = v2_new**(3.0/2.0) / rho
 
     state.mintrelax                     = float(np.min(state.trelax))
-    state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(rmid, rho_new, v2_new)
-    state.r50_spread                    = calc_r50_spread(r_new, m, state.r50evo)
-    compute_rc_frac(r_new, m, state.r_c, state.rc_frac)
+    state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(rmid, rho, v2_new)
+    state.r50_spread                    = calc_r50_spread(r, m, state.r50evo)
+    compute_rc_frac(r, m, state.r_c, state.rc_frac)
 
     # Diagnostics
-    state.dt_cum += float(dt_prop)
-    state.du_max_cum += float(du_max)
-    state.dt_over_trelax_cum += float(dt_prop / state.mintrelax)
+    state.dt_cum                += float(dt_prop)
+    state.du_max_cum            += float(du_max)
+    state.dt_over_trelax_cum    += float(dt_prop / state.mintrelax)
 
     state.dt = float(dt_prop)
     state.t += float(dt_prop)
