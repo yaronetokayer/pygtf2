@@ -343,7 +343,145 @@ def compute_he_pressures(r, rho, p, m, bkg_param):
 
 @njit(int64(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]),
       cache=True, fastmath=True)
-def revirialize_interp(r, rho, p, m, bkg_param) -> int:
+def revirialize_interp_hybrid(r, rho, p, m, bkg_param) -> int:
+    """
+    Multi-species re-virialization, Jacobi-style in the inter-species coupling.
+
+    In-place version that is functionally equivalent to the older out-of-place
+    implementation: later species see earlier species' updated radii through an
+    auxiliary radius copy used by interp_m_enc, while each species' own solve
+    is still built from the original in-place state at the moment that species
+    is processed.
+
+    Parameters
+    ----------
+    r : ndarray, shape (s, N+1)
+        Edge radii per species. Updated in place.
+    rho : ndarray, shape (s, N)
+        Shell densities per species. Updated in place.
+    p : ndarray, shape (s, N)
+        Shell pressures per species. Updated in place.
+    m : ndarray, shape (s, N+1)
+        Total enclosed mass at edges, per species. Not updated.
+    bkg_param : ndarray, shape (4,)
+        Parameters for background potential.
+
+    Returns
+    -------
+    status : int
+        STATUS_OK if successful,
+        STATUS_SHELL_CROSSING if any radii cross.
+    """
+    s, Np1 = r.shape
+    add_bkg_flag = bkg_param[0] != -1
+
+    # This plays the role of the old r_copy:
+    # used only for inter-species mass interpolation, and updated after each species.
+    r_interp = r.copy()
+
+    # Pre-allocate tridiagonal coefficient and work arrays
+    n_int = Np1 - 2
+    a  = np.empty(n_int, dtype=np.float64)
+    b  = np.empty(n_int, dtype=np.float64)
+    c  = np.empty(n_int, dtype=np.float64)
+    y  = np.empty(n_int, dtype=np.float64)
+    xk = np.empty(n_int, dtype=np.float64)
+    vol_old = np.empty(Np1 - 1, dtype=np.float64)
+    m_totk = np.empty(Np1, dtype=np.float64)
+
+    for k in range(s):
+        # Use the frozen radii snapshot for all species interpolation
+        interp_m_enc(k, r_interp, m, m_totk)
+
+        if add_bkg_flag:
+            m_totk += add_bkg_pot(r[k], bkg_param)
+
+        # Build the system from the frozen radii for species k
+        build_tridiag_system(r[k], rho[k], p[k], m_totk, a, b, c, y)
+        solve_tridiagonal_thomas(a, b, c, y, xk)
+
+        # Make sure the update is applied relative to the original radii
+        _update_r_p_rho(r[k], xk, p[k], rho[k], vol_old)
+        r_interp[k, :] = r[k, :]
+
+    for k in range(s):
+        for i in range(Np1 - 1):
+            if r[k, i + 1] - r[k, i] <= 0.0:
+                return STATUS_SHELL_CROSSING
+
+    return STATUS_OK
+
+@njit(int64(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]),
+      cache=True, fastmath=True)
+def revirialize_interp_jacobi(r, rho, p, m, bkg_param) -> int:
+    """
+    Multi-species re-virialization, Jacobi-style in the inter-species coupling.
+
+    Updates r, rho, and p in place, but uses a frozen copy of the original r
+    array for every species' re-virialization during this sweep.  This prevents
+    earlier species' radius updates from feeding back into later species within
+    the same call.
+
+    Parameters
+    ----------
+    r : ndarray, shape (s, N+1)
+        Edge radii per species. Updated in place.
+    rho : ndarray, shape (s, N)
+        Shell densities per species. Updated in place.
+    p : ndarray, shape (s, N)
+        Shell pressures per species. Updated in place.
+    m : ndarray, shape (s, N+1)
+        Total enclosed mass at edges, per species. Not updated.
+    bkg_param : ndarray, shape (4,)
+        Parameters for background potential.
+
+    Returns
+    -------
+    status : int
+        STATUS_OK if successful,
+        STATUS_SHELL_CROSSING if any radii cross.
+    """
+    s, Np1 = r.shape
+    add_bkg_flag = bkg_param[0] != -1
+
+    # Freeze the original radii for this entire sweep (Jacobi outer coupling)
+    r_old = r.copy()
+
+    # Pre-allocate tridiagonal coefficient and work arrays
+    n_int = Np1 - 2
+    a  = np.empty(n_int, dtype=np.float64)
+    b  = np.empty(n_int, dtype=np.float64)
+    c  = np.empty(n_int, dtype=np.float64)
+    y  = np.empty(n_int, dtype=np.float64)
+    xk = np.empty(n_int, dtype=np.float64)
+    vol_old = np.empty(Np1 - 1, dtype=np.float64)
+    m_totk = np.empty(Np1, dtype=np.float64)
+
+    for k in range(s):
+        # Use the frozen radii snapshot for all species interpolation
+        interp_m_enc(k, r_old, m, m_totk)
+
+        if add_bkg_flag:
+            m_totk += add_bkg_pot(r_old[k], bkg_param)
+
+        # Build the system from the frozen radii for species k
+        build_tridiag_system(r_old[k], rho[k], p[k], m_totk, a, b, c, y)
+        solve_tridiagonal_thomas(a, b, c, y, xk)
+
+        # Make sure the update is applied relative to the original radii
+        r[k, :] = r_old[k, :]
+        _update_r_p_rho(r[k], xk, p[k], rho[k], vol_old)
+
+    for k in range(s):
+        for i in range(Np1 - 1):
+            if r[k, i + 1] - r[k, i] <= 0.0:
+                return STATUS_SHELL_CROSSING
+
+    return STATUS_OK
+
+@njit(int64(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]),
+      cache=True, fastmath=True)
+def revirialize_interp_gs(r, rho, p, m, bkg_param) -> int:
     """
     Multi-species re-virialization.  Updates r, rho, and p in place.  No diagnostics.
 
@@ -351,7 +489,7 @@ def revirialize_interp(r, rho, p, m, bkg_param) -> int:
     Species generally do not have aligned radial bins, so enclosed mass from the
     other species is interpolated onto the current species grid.
 
-    Updates to per-species r arrays are fed back into next species revir - this is found to be necessary.
+    Updates to per-species r arrays are fed back into next species revir - this is a Gauss-Seidel-like scheme.
 
     Parameters
     ----------
@@ -415,7 +553,95 @@ def revirialize_interp(r, rho, p, m, bkg_param) -> int:
         float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]
     ), cache=True, fastmath=True,
 )
-def revirialize_interp_diagnostics(
+def revirialize_interp_jacobi_diagnostics(r, rho, p, m, bkg_param) -> tuple[int, float, float]:
+    """
+    Multi-species re-virialization.  Jacobi-style in the inter-species coupling..  With diagnostics.
+    To be used during state initialization.
+
+    Solves for radius adjustments and updates physical quantities for all species.
+    Species generally do not have aligned radial bins, so enclosed mass from the
+    other species is interpolated onto the current species grid.
+
+    Parameters
+    ----------
+    r : ndarray, shape (s, N+1)
+        Edge radii per species. Updated in place.
+    rho : ndarray, shape (s, N)
+        Shell densities per species. Updated in place.
+    p : ndarray, shape (s, N)
+        Shell pressures per species. Updated in place.
+    m : ndarray, shape (s, N+1)
+        Total enclosed mass at edges, per species. Not updated.
+    bkg_param : ndarray, shape (4,)
+        Parameters for background potential.
+
+    Returns
+    -------
+    status : int
+        STATUS_OK if successful,
+        STATUS_SHELL_CROSSING if any radii cross.
+    dr_max : float
+        Global maximum |dr/r| across all species.
+    he_res : float
+        Norm of HE residual for updated profile.
+        If shell crossing occurs, returns -1.0 as a sentinel.
+
+    Notes
+    -----
+    This function solves a tridiagonal system to compute radius corrections for each species,
+    then updates density and pressure accordingly. If any radii cross, the function returns
+    'shell_crossing'. Since updates are in place, the arrays may already be partially or fully 
+    modified when that happens.
+    """
+    s, Np1 = r.shape
+    dr_max = 0.0
+    add_bkg_flag = bkg_param[0] != -1
+
+    # Freeze the original radii for this entire sweep (Jacobi outer coupling)
+    r_old = r.copy()
+
+    # Pre-allocate tridiagonal coefficient and work arrays
+    n_int = Np1 - 2
+    a  = np.empty(n_int, dtype=np.float64)
+    b  = np.empty(n_int, dtype=np.float64)
+    c  = np.empty(n_int, dtype=np.float64)
+    y  = np.empty(n_int, dtype=np.float64)
+    xk = np.empty(n_int, dtype=np.float64)
+    vol_old = np.empty(Np1 - 1, dtype=np.float64)
+    m_totk = np.empty(Np1, dtype=np.float64)
+
+    for k in range(s):
+        interp_m_enc(k, r_old, m, m_totk)
+
+        if add_bkg_flag: # For the future: make this in-place too
+            m_totk += add_bkg_pot(r_old[k], bkg_param)
+        
+        build_tridiag_system(r_old[k], rho[k], p[k], m_totk, a, b, c, y)
+        solve_tridiagonal_thomas(a, b, c, y, xk)
+        
+        local_max = np.max(np.abs(xk))
+        if local_max > dr_max:
+            dr_max = local_max
+        
+        # Make sure the update is applied relative to the original radii
+        r[k, :] = r_old[k, :]
+        _update_r_p_rho(r[k], xk, p[k], rho[k], vol_old)
+
+    for k in range(s):
+        for i in range(Np1 - 1):
+            if r[k, i + 1] - r[k, i] <= 0.0:
+                return STATUS_SHELL_CROSSING, dr_max, -1.0
+
+    he_res = compute_he_resid_norm(r, rho, p, m, bkg_param)
+
+    return STATUS_OK, dr_max, he_res
+
+@njit(
+    types.Tuple((int64, float64, float64))(
+        float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]
+    ), cache=True, fastmath=True,
+)
+def revirialize_interp_gs_diagnostics(
     r, rho, p, m, bkg_param
 ) -> tuple[int, float, float]:
     """

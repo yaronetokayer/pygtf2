@@ -591,7 +591,7 @@ class State:
         First update pressure with a backward sweep, then
         iteratively runs revirialize() until max |dr/r| < eps_dr.
         """
-        from pygtf2.evolve.hydrostatic import revirialize_interp_diagnostics, compute_he_pressures, STATUS_OK, STATUS_SHELL_CROSSING
+        from pygtf2.evolve.hydrostatic import revirialize_interp_gs_diagnostics, revirialize_interp_jacobi_diagnostics, compute_he_pressures, STATUS_OK, STATUS_SHELL_CROSSING
         chatter = self.config.io.chatter
         bkg_param = self.bkg_param
 
@@ -614,7 +614,8 @@ class State:
         i = 0
         while True:
             i += 1
-            status, dr_max_new, he_res = revirialize_interp_diagnostics(r_new, rho_new, p_new, m, bkg_param)
+            status, dr_max_new, he_res = revirialize_interp_gs_diagnostics(r_new, rho_new, p_new, m, bkg_param)
+            # status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(r_new, rho_new, p_new, m, bkg_param)
             
             if status == STATUS_SHELL_CROSSING:
                 raise RuntimeError(f"Initial revir iter {i}: Shell crossing!")

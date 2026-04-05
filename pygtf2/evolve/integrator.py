@@ -2,7 +2,7 @@ import numpy as np
 from collections import deque
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 from pygtf2.evolve.transport import compute_luminosities, conduct_heat, heat_exchange, conduct_implicit
-from pygtf2.evolve.hydrostatic import revirialize_interp, STATUS_OK, STATUS_SHELL_CROSSING
+from pygtf2.evolve.hydrostatic import revirialize_interp_gs, revirialize_interp_jacobi, revirialize_interp_hybrid, STATUS_OK, STATUS_SHELL_CROSSING
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binaries_heating
 from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread, compute_rc_frac
@@ -285,8 +285,10 @@ def integrate_time_step(state, dt_prop, step_count):
         v2_cond, p, eps_max = binaries_heating(rmid_orig, rho, v2_cond, dt_prop)
 
     ### Step 2: Reestablish hydrostatic equilibrium ###
-    status = revirialize_interp(r, rho, p, m, bkg_param) # Modifies r, rho, p in place
-        
+    # status = revirialize_interp_gs(r, rho, p, m, bkg_param) # Modifies r, rho, p in place
+    # status = revirialize_interp_jacobi(r, rho, p, m, bkg_param)
+    status = revirialize_interp_hybrid(r, rho, p, m, bkg_param)
+
     # Shell crossing
     if status == STATUS_SHELL_CROSSING:
         raise RuntimeError(f"Step {step_count}: Shell crossing in conduction/revirialization step")
