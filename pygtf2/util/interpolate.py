@@ -389,9 +389,7 @@ def interp_species_loglog_single(r0, r, x, k) -> float:
     out = interp_species_loglog(tmp, r, x, k)
     return out[0]
 
-@njit(
-    void(int64, float64[:, :], float64[:, :], float64[:]), fastmath=True, cache=True,
-)
+@njit(void(int64, float64[:, :], float64[:, :], float64[:]), fastmath=True, cache=True)
 def interp_m_enc(k, r, m, m_tot_on_k):
     """
     Fill m_tot_on_k with total enclosed mass evaluated on species-k radial grid,
@@ -484,3 +482,114 @@ def interp_m_enc(k, r, m, m_tot_on_k):
             m_tot_on_k[t] += m_interp
 
     m_tot_on_k[0] = 0.0
+
+@njit(void(int64, float64[:, :], float64[:, :], float64[:], float64[:]), fastmath=True, cache=True)
+def interp_m_enc_and_K(k, r, m, m_tot_on_k, K_on_k):
+    """
+    Fill m_tot_on_k with total enclosed mass evaluated on species-k radial grid,
+    using piecewise power-law (log-log) interpolation for other species and
+    power-law extrapolation beyond their maximum radius.
+
+    Fill K_on_k with dM_other/dr evaluated on the same grid. The derivative K_on_k 
+    includes only the non-Lagrangian contribution from other species interpolated 
+    onto species k's grid. Species k's own enclosed mass is copied into m_tot_on_k 
+    but contributes nothing to K_on_k.
+
+    Parameters
+    ----------
+    k : int
+        Species index (0 <= k < s).
+    r : (s, N+1) float64
+        Edge radii per species.
+    m : (s, N+1) float64
+        Enclosed mass per species at edges.
+    m_tot_on_k : (N+1,) float64
+        Preallocated output buffer for total enclosed mass on species-k grid.
+    K_on_k : (N+1,) float64
+        Preallocated output buffer for dM_other/dr on species-k grid.
+        Only interior values K_on_k[1:N] are physically used later.
+    """
+    s, Np1 = r.shape
+    N = Np1 - 1
+
+    rk = r[k]  # view (N+1,)
+
+    # Start with species k's own contribution to m_enc
+    for t in range(Np1):
+        m_tot_on_k[t] = m[k, t]
+        K_on_k[t] = 0.0         # Initialize this array
+    
+    m_tot_on_k[0]   = 0.0       # To ensure
+    K_on_k[0]       = 0.0       # This will not be used
+
+    # Accumulate contributions from other species
+    for j in range(s):
+        if j == k:
+            continue
+
+        rj = r[j]  # (N+1,)
+        mj = m[j]  # (N+1,)
+
+        m_last = mj[N]
+        rj_max = rj[N]
+
+        for t in range(1, Np1):
+            x = rk[t]
+
+            # Constant tail beyond species j's maximum radius
+            # if x >= rj_max:
+            #     m_tot_on_k[t] += m_last
+            #     continue
+
+            # Power-law extrapolation beyond species j's maximum radius
+            if x >= rj_max:
+                r0 = rj[N-1]; r1 = rj[N]
+                m0 = mj[N-1]; m1 = mj[N]
+                # use last log–log slope; fall back to constant if unsafe
+                if r0 > 0.0 and m0 > 0.0 and m1 > 0.0 and r1 > r0 and x > 0.0:
+                    a = (np.log(m1) - np.log(m0)) / (np.log(r1) - np.log(r0))   # Log slope
+                    m_ext = m1 * np.exp(a * np.log(x / r1))
+                    K_ext = a * m_ext / x                                       # Derivative of the power law
+                else:
+                    m_ext = m_last                                              # Fallback for zeros/degeneracies
+                    K_ext = 0.0
+                m_tot_on_k[t] += m_ext
+                K_on_k[t] += K_ext
+                continue
+
+            # Locate j1 such that rj[j1] <= x < rj[j1+1]
+            # Clamp so j1 >= 1 and j1 <= N-1, avoiding the origin in log space
+            lo = 1
+            hi = N  # Invariant: search in [lo, hi)
+            while lo < hi:
+                mid = (lo + hi) // 2
+                if rj[mid] <= x:
+                    lo = mid + 1
+                else:
+                    hi = mid
+
+            j1 = lo - 1
+            if j1 < 1:
+                j1 = 1
+            elif j1 > N - 1:
+                j1 = N - 1
+
+            r0 = rj[j1]
+            r1 = rj[j1 + 1]
+            m0 = mj[j1]
+            m1 = mj[j1 + 1]
+
+            # Interior piecewise power-law interpolation in log-log space
+            # Fall back to constant if logs would be unsafe
+            if r0 > 0.0 and m0 > 0.0 and m1 > 0.0 and r1 > r0 and x > 0.0:
+                a = (np.log(m1) - np.log(m0)) / (np.log(r1) - np.log(r0))
+                m_interp = m0 * np.exp(a * np.log(x / r0))
+                K_interp = a * m_interp / x
+            else:
+                m_interp = m0
+                K_interp = 0.0
+
+            m_tot_on_k[t] += m_interp
+            K_on_k[t] += K_interp
+
+    K_on_k[N] = 0.0 # Not used

@@ -3,9 +3,10 @@ from numba import njit, float64, types, void
 from pygtf2.util.interpolate import interp_linear_to_interfaces
 from pygtf2.util.calc import solve_tridiagonal_thomas
 
-### EXPLICIT METHOD
-
-@njit(void(float64, float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:, :], float64[:, :]), cache=True, fastmath=True)
+@njit(
+    void(float64, float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:, :], float64[:, :]),
+    cache=True, fastmath=True
+)
 def compute_luminosities(c2, r, v2, rho, mrat, lnL, lum):
     """ 
     Compute luminosity of each shell interface based on temperature gradient and conductivity.
@@ -94,7 +95,8 @@ def add_dv2dt_conduction(m, lum, dv2dt):
             dm = m[n, i+1] - m[n, i]
             dv2dt[n, i] += -(2.0 / 3.0) * (lum[n, i+1] - lum[n, i]) / dm
 
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:, :], float64, float64[:, :]), cache=True, fastmath=True)
+@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:, :], float64, float64[:, :]),
+    cache=True)
 def add_dv2dt_hex(v2, rho, lnL, mrat, r, c1, dv2dt):
     """
     Add the inter-species heat-exchange contribution to dv2/dt.
@@ -207,7 +209,8 @@ def add_dv2dt_hex(v2, rho, lnL, mrat, r, c1, dv2dt):
                 else:
                     j += 1
 
-@njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64, float64), cache=True, fastmath=True)
+@njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64, float64),
+    cache=True)
 def apply_dv2dt(v2, dv2dt, dt_prop, eps_du):
     """
     Apply the accumulated dv2/dt with an adaptive limiter.
@@ -280,9 +283,21 @@ def apply_dv2dt(v2, dv2dt, dt_prop, eps_du):
 
     return float(dv2max), float(dt_eff)
 
-### IMEX METHOD
+### NEW IMPLICIT METHOD
 
-@njit(void(float64[:, :], float64[:, :],float64[:, :], float64[:], float64[:, :],float64[:, :], float64, float64), cache=True, fastmath = True)
+@njit(
+    void(
+        float64[:, :],   # v2
+        float64[:, :],   # rho
+        float64[:, :],   # lnL
+        float64[:],      # mrat
+        float64[:, :],   # r
+        float64[:, :],   # dv2_work (out)
+        float64,         # dt
+        float64          # c1
+    ),
+    cache=True
+)
 def compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_work, dt, c1):
     """
     Compute the raw inter-species heat-exchange increment dv2_work
@@ -382,7 +397,13 @@ def compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_work, dt, c1):
                 else:
                     j += 1
 
-@njit(float64(float64[:, :], float64[:, :]), cache=True, fastmath=True)
+@njit(
+    float64(
+        float64[:, :],   # v2
+        float64[:, :]    # dv2_work
+    ),
+    cache=True
+)
 def hex_du_max(v2, dv2_work):
     """
     Compute max |dv2|/|v2| over all species and cells.
@@ -405,7 +426,14 @@ def hex_du_max(v2, dv2_work):
 
     return du_max
 
-@njit(void(float64[:, :], float64[:, :], float64), cache=True)
+@njit(
+    void(
+        float64[:, :],   # v2 in/out
+        float64[:, :],   # dv2_work
+        float64          # scale
+    ),
+    cache=True
+)
 def apply_scaled_dv2(v2, dv2_work, scale):
     """
     Apply v2 += scale * dv2_work in place.
@@ -416,7 +444,15 @@ def apply_scaled_dv2(v2, dv2_work, scale):
         for i in range(N):
             v2[n, i] += scale * dv2_work[n, i]
 
-@njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64, float64), cache=True, fastmath=True)
+@njit(
+    types.Tuple((float64, float64))(
+        float64[:, :],   # v2
+        float64[:, :],   # dv2_work
+        float64,         # dt
+        float64          # eps_du
+    ),
+    cache=True
+)
 def hex_limit_dt(v2, dv2_work, dt, eps_du):
     """
     Compute du_max and the hex-limited effective timestep.
@@ -430,7 +466,10 @@ def hex_limit_dt(v2, dv2_work, dt, eps_du):
 
     return du_max, dt_eff
 
-@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64, float64), cache=True, fastmath=True)
+@njit(
+    void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64, float64),
+    cache=True, fastmath=True
+)
 def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     """
     Construct tridiagonal coefficients: a_i du_i-1 + b_i du_i + c_i du_i+1 = d_i
@@ -505,8 +544,9 @@ def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     c[-1] = 0.0
     d[-1] = delu[-1] / np.sqrt(su[-1])
 
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64[:], float64[:, :], float64[:, :], float64), cache=True, fastmath=True)
-def conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_trial, dt,):
+@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64[:], float64[:, :], float64[:, :], float64),
+      cache=True, fastmath=True)
+def conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_trial, dt) -> np.float64:
     """
     Implicit intra-species conduction step on v2.
     Use a fixed dt - no timestep limiting in this step - we find that the hex step limits in almost all cases.
@@ -542,7 +582,13 @@ def conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_trial, dt,):
         for i in range(N):
             v2[k, i] += (2.0 / 3.0) * du_trial[k, i]
 
-@njit(float64(float64[:, :], float64[:, :]), cache=True)
+@njit(
+    float64(
+        float64[:, :],   # v2
+        float64[:, :]    # du_cond
+    ),
+    cache=True
+)
 def cond_du_max(v2, du_cond):
     """
     Compute max |du|/|u| over all species and cells, where u = 1.5*v2.
@@ -564,11 +610,24 @@ def cond_du_max(v2, du_cond):
 
     return du_max
 
-@njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64, float64[:], float64[:, :], float64[:, :], float64[:, :], float64, float64, types.int64), cache=True, fastmath=True)
-def conduction_imex(
-    v2, rho, r, m, c1, c2, mrat, lnL,
-    dv2_hex_work, du_cond_work, dt, eps_du, order,
-    ) -> tuple[np.float64, np.float64]:
+@njit(
+    types.Tuple((float64, float64))(
+        float64[:, :],  # v2        (in/out)
+        float64[:, :],  # rho
+        float64[:, :],  # r
+        float64[:, :],  # m
+        float64,        # c1
+        float64,        # c2
+        float64[:],     # mrat
+        float64[:, :],  # lnL
+        float64[:, :],  # dv2_hex_work
+        float64[:, :],  # du_cond_work
+        float64,        # dt
+        float64,        # eps_u
+        types.int64     # order
+    ),cache=True)
+def conduction_split_step(v2, rho, r, m, c1, c2, mrat, lnL,
+                          dv2_hex_work, du_cond_work, dt, eps_du, order) -> tuple[np.float64, np.float64]:
     """
     Apply one split conduction step with a shared timestep determined by
     the heat-exchange (hex) operator.

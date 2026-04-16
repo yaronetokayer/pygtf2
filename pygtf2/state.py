@@ -173,7 +173,6 @@ class State:
         state.m      = np.zeros((s, Np1), dtype=np.float64)
         state.rho    = np.zeros((s, N),   dtype=np.float64)
         state.v2     = np.zeros((s, N),   dtype=np.float64)
-        state.p      = np.zeros((s, N),   dtype=np.float64)
         state.trelax = np.zeros((s, N),   dtype=np.float64)
         state.u      = np.zeros((s, N),   dtype=np.float64)
 
@@ -195,7 +194,6 @@ class State:
             state.m[k]      = m_edges
             state.rho[k]    = sd['rho'].astype(np.float64)
             state.v2[k]     = sd['v2'].astype(np.float64)
-            state.p[k]      = sd['p'].astype(np.float64)
             state.trelax[k] = sd['trelax'].astype(np.float64)
         state.rmid = 0.5 * (state.r[:,1:] + state.r[:, :-1])
 
@@ -581,7 +579,6 @@ class State:
         self.m          = m
         self.rmid       = r_mid
         self.rho        = rho
-        self.p          = p
         self.v2         = v2
         self.trelax     = trelax
 
@@ -591,7 +588,7 @@ class State:
         First update pressure with a backward sweep, then
         iteratively runs revirialize() until max |dr/r| < eps_dr.
         """
-        from pygtf2.evolve.hydrostatic import revirialize_interp_gs_diagnostics, revirialize_interp_jacobi_diagnostics, compute_he_pressures, STATUS_OK, STATUS_SHELL_CROSSING
+        from pygtf2.evolve.hydrostatic import revirialize_interp_gs_diagnostics, revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING, compute_he_resid_norm, compute_he_pressures
         chatter = self.config.io.chatter
         bkg_param = self.bkg_param
 
@@ -600,22 +597,21 @@ class State:
 
         r_new = self.r.astype(np.float64, copy=True)
         rho_new = self.rho.astype(np.float64, copy=True)
-        p_new = self.p.astype(np.float64, copy=True)
+        p_new = rho_new * self.v2.astype(np.float64, copy=True)
         m = self.m.astype(np.float64, copy=False)
 
-        # Update pressure with backward sweep
-        p_out, res_old, res_new = compute_he_pressures(self.r, self.rho, self.p, m, bkg_param)
-        p_new[:,:] = p_out[:,:]
+        # --- Update pressure with backward sweep ---
+        res_old, res_new = compute_he_pressures_with_resid(self.r, self.rho, p_new, m, bkg_param)
         if chatter:
             print(f"\tInitial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
 
-        # Iterative revir
+        # --- Iterative revir ---
         eps_dr = 1e-10
         i = 0
         while True:
             i += 1
-            status, dr_max_new, he_res = revirialize_interp_gs_diagnostics(r_new, rho_new, p_new, m, bkg_param)
-            # status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(r_new, rho_new, p_new, m, bkg_param)
+            # status, dr_max_new, he_res = revirialize_interp_gs_diagnostics(r_new, rho_new, p_new, m, bkg_param)
+            status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(r_new, rho_new, p_new, m, bkg_param)
             
             if status == STATUS_SHELL_CROSSING:
                 raise RuntimeError(f"Initial revir iter {i}: Shell crossing!")
@@ -626,11 +622,24 @@ class State:
             if i >= 100:
                 raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
 
+        # DEBUGGING
+        # from pygtf2.dev.debug import plot_r_markers
+        # reference = float(r_new[0,1])
+        # for i in range(10000):
+        #     status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(r_new, rho_new, p_new, m, bkg_param)
+        #     print(compute_he_resid_norm(r_new, rho_new, p_new, m, bkg_param))
+            # compute_he_pressures(r_new, rho_new, p_new, m, bkg_param)
+            # if abs(r_new[0,1])/reference - 1.0 > 1e-2:
+            #     print(r_new[0,1], abs(r_new[0,1])/reference - 1.0)
+            #     print(r_new[:,1:3])
+            #     print(i)
+            #     break
+        ### END
+
         v2_new = p_new / rho_new
 
         self.r = r_new
         self.rho = rho_new
-        self.p = p_new
         self.v2 = v2_new
         self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
         self.trelax = v2_new**(3.0/2.0) / rho_new
@@ -670,8 +679,8 @@ class State:
         self.r50_spread                 = calc_r50_spread(self.r, self.m, self.r50evo)
 
         # Species core-dominance metric
-        self.rc_frac = np.zeros(s)
-        compute_rc_frac(self.r, self.m, self.r_c, self.rc_frac)
+        # self.rc_frac = np.zeros(s)
+        # compute_rc_frac(self.r, self.m, self.r_c, self.rc_frac)
 
         # For diagnostics
         self.dt_cum = 0.0

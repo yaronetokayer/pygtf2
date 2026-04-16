@@ -213,7 +213,6 @@ def extract_snapshot_data(filename):
           'log_rmid' : array,
           'm_tot'    : array,
           'rho_tot'  : array,
-          'p_tot'    : array,
           'eta'      : array,
           'species'  : {
               'dm': {
@@ -222,7 +221,6 @@ def extract_snapshot_data(filename):
                   'm'     : array,
                   'rho'   : array,
                   'v2'    : array,
-                  'p'     : array,
                   'trelax': array,
               },
               'stars': { ... }
@@ -248,7 +246,6 @@ def extract_snapshot_data(filename):
         'log_rmid': data[:, idx['log_rmid']],
         'm_tot'   : data[:, idx['m_tot']],
         'rho_tot' : data[:, idx['rho_tot']],
-        'p_tot'   : data[:, idx['p_tot']],
         'eta'     : data[:, idx['eta']],
         'species' : {},
     }
@@ -263,7 +260,6 @@ def extract_snapshot_data(filename):
                 'm'     : data[:, idx[f'm[{label}]']],
                 'rho'   : data[:, idx[f'rho[{label}]']],
                 'v2'    : data[:, idx[f'v2[{label}]']],
-                'p'     : data[:, idx[f'p[{label}]']],
                 'trelax': data[:, idx[f'trelax[{label}]']],
             }
 

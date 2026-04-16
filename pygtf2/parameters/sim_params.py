@@ -16,8 +16,13 @@ class SimParams:
         Parameter b from Zhong & Shapiro (2025; arXiv:2505.18251)
     beta : float
         Parameter beta from Zhong & Shapiro (2025; arXiv:2505.18251)
-    bkg : str
-        String representing the background potential. So far implemented {None, 'hernq'}
+    evap : bool
+        Include evaporation in simulation
+    binaries : bool
+        Include binary heating in simulation
+    conduct_imex : bool
+        Use IMEX conduction scheme instead of explicit scheme
+    bkg : dict
     """
     VALID_BKG_PROFILES = ('hernq_static', 'hernq_decay')
     DEFAULT_BKG = {'prof': None, 'mass': None, 'length': None, 'other': None}
@@ -32,8 +37,10 @@ class SimParams:
             b : float = 0.45,
             evap : bool = False,
             binaries : bool = False,
+            conduct_imex : bool = True,
             bkg: dict | None = None,
     ):
+        
         self._t_halt = None
         self._rho_c_halt = None
         self._lnL_param = None
@@ -42,6 +49,7 @@ class SimParams:
         self._b = None
         self._evap = None
         self._binaries = None
+        self._conduct_imex = None
         self._bkg = dict(self.DEFAULT_BKG)
 
         self.t_halt = t_halt
@@ -52,6 +60,7 @@ class SimParams:
         self.b = b
         self.evap = evap
         self.binaries = binaries
+        self._conduct_imex = conduct_imex
         if bkg is not None:
             self.bkg = bkg
 
@@ -134,6 +143,16 @@ class SimParams:
         if not isinstance(value, (bool, int)) or (isinstance(value, int) and value not in (0, 1)):
             raise ValueError("binaries must be a bool (True/False) or int (0/1)")
         self._binaries = bool(value)
+
+    @property
+    def conduct_imex(self):
+        return self._conduct_imex
+
+    @conduct_imex.setter
+    def conduct_imex(self, value):
+        if not isinstance(value, (bool, int)) or (isinstance(value, int) and value not in (0, 1)):
+            raise ValueError("conduct_imex must be a bool (True/False) or int (0/1)")
+        self._conduct_imex = bool(value)
 
     @property
     def bkg(self):

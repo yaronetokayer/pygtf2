@@ -15,6 +15,8 @@ class IOParams:
         Subdirectory named 'ModelXXX', where XXX is zero-padded model number.
     nlog : int
         Timesteps between logging output.
+    nupdate : int
+        Timesteps between updating instantaneous timestep counter visual
     drho_prof : float
         Change in log of central density to trigger writing profiles to disk.
     drho_tevol : float
@@ -30,7 +32,6 @@ class IOParams:
                  base_dir: str = None, 
                  nlog: int = 100000,
                  nupdate: int = 1000,
-                 write_auto: bool = True,
                  drho_prof : float = 0.1,
                  drho_tevol : float = 0.05,
                  dr50_tevol : float = 0.1,
@@ -41,7 +42,6 @@ class IOParams:
         self._base_dir = None
         self._nlog = nlog
         self._nupdate = nupdate
-        self._write_auto = write_auto
         self._drho_prof = drho_prof
         self._drho_tevol = drho_tevol
         self._dr50_tevol = dr50_tevol
@@ -53,7 +53,6 @@ class IOParams:
         self.base_dir = base_dir or os.getcwd()
         self.nlog = nlog
         self.nupdate = nupdate
-        self.write_auto = write_auto
         self.drho_prof = drho_prof
         self.drho_tevol = drho_tevol
         self.dr50_tevol = dr50_tevol
@@ -123,16 +122,6 @@ class IOParams:
         self._nupdate = value
 
     @property
-    def write_auto(self):
-        return self._write_auto
-
-    @write_auto.setter
-    def write_auto(self, value):
-        if not isinstance(value, bool):
-            raise TypeError("write_auto must be a boolean")
-        self._write_auto = value
-
-    @property
     def drho_prof(self):
         return self._drho_prof
     
@@ -189,7 +178,7 @@ class IOParams:
         self._chatter = value
 
     def __repr__(self):
-        all_attrs = ['model_no', 'model_dir', 'base_dir', 'nlog', 'nupdate', 'write_auto', 'drho_prof', 'drho_tevol', 'dr50_tevol', 'overwrite', 'chatter']
+        all_attrs = ['model_no', 'model_dir', 'base_dir', 'nlog', 'nupdate', 'drho_prof', 'drho_tevol', 'dr50_tevol', 'overwrite', 'chatter']
         attr_strs = []
 
         for attr in all_attrs:

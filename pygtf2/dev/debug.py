@@ -47,7 +47,7 @@ def plot_r_markers(r_slice):
             ax.text(rj, -0.05, str(j), ha="center", va="top",
                     transform=ax.get_xaxis_transform(), fontsize=8)
         ax.set_ylim(0, 1)
-        ax.set_xlim(3e-3, 1e-1)
+        ax.set_xlim(0.9*np.min(r_slice[k]), 1.1*np.max(r_slice[k]))
         ax.set_yticks([])
         ax.set_ylabel(f"species {k+1}", rotation=0, labelpad=25, va="center")
 

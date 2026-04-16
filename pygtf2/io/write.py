@@ -154,6 +154,7 @@ def write_log_entry(state, start_step):
 
     _update_file(filepath, header, new_line, step)
 
+    state.n_iter_dr = 0
     state.dt_cum = 0.0
     state.du_max_cum = 0.0
     state.dt_over_trelax_cum = 0.0
@@ -172,7 +173,7 @@ def write_profile_snapshot(state, initialize=False):
 
     Columns:
         i, log_r, log_rmid,
-        m_tot, rho_tot, p_tot, eta
+        m_tot, rho_tot, eta
         [for each species in state.labels in order:]
             m[<label>], rho[<label>], v2[<label>], p[<label>], trelax[<label>]
 
@@ -222,7 +223,6 @@ def write_profile_snapshot(state, initialize=False):
 
     m_tot = sum_extensive_loglog(r_tot, r, state.m)
     rho_tot = sum_intensive_loglog(r_totmid, rmid, state.rho)
-    p_tot = sum_intensive_loglog(r_totmid, rmid, state.p)
     eta = np.zeros(N, dtype=np.float64)
     if s > 1 and np.max(m_part) > np.min(m_part):
         v2_interp = interp_intensive_loglog(r_totmid, rmid, state.v2)
@@ -246,7 +246,6 @@ def write_profile_snapshot(state, initialize=False):
         f"{'log_rmid':>13}",
         f"{'m_tot':>13}",
         f"{'rho_tot':>13}",
-        f"{'p_tot':>13}",
         f"{'eta':>13}",
     ]
     # Per-species blocks
@@ -273,7 +272,6 @@ def write_profile_snapshot(state, initialize=False):
                 f"{np.log10(r_totmid[i]): 13.6e}",
                 f"{m_tot[i+1]: 13.6e}",
                 f"{rho_tot[i]: 13.6e}",
-                f"{p_tot[i]: 13.6e}",
                 f"{eta[i]: 13.6e}",
             ]
             # Per-species fields
@@ -284,7 +282,6 @@ def write_profile_snapshot(state, initialize=False):
                     f"{state.m[k, i+1]: 13.6e}",
                     f"{state.rho[k, i]: 13.6e}",
                     f"{state.v2[k, i]: 13.6e}",
-                    f"{state.p[k, i]: 13.6e}",
                     f"{state.trelax[k, i]: 13.6e}",
                 ])
             f.write("  ".join(row) + "\n")
@@ -389,7 +386,7 @@ def write_time_evolution(state):
             f"{f'r50[{name}]':>13}",
             f"{f'r90[{name}]':>13}",
             f"{f'r50evo[{name}]':>13}",
-            f"{f'rc_frac[{name}]':>13}",
+            # f"{f'rc_frac[{name}]':>13}",
         ])
     header = "  ".join(header) + "\n"
 
@@ -410,11 +407,11 @@ def write_time_evolution(state):
     r = state.r
     m = state.m
     r50evo = state.r50evo[:,1]
-    rc_frac = state.rc_frac
+    # rc_frac = state.rc_frac
     for k, name in enumerate(labels):
         rho_c_k = float(rho[k, 0])
         r50evok = r50evo[k]
-        rc_frack = rc_frac[k]
+        # rc_frack = rc_frac[k]
 
         # Expecting: array([r_1%, r_5%, r_10%, r_20%, r_50%, r_90%]) in code units
         radii = np.asarray(mass_fraction_radii(r[k], m[k], percents), dtype=np.float64)
@@ -428,7 +425,7 @@ def write_time_evolution(state):
             f"{radii[4]: 13.6e}",
             f"{radii[5]: 13.6e}",
             f"{r50evok: 13.6e}",
-            f"{rc_frack: 13.6e}",
+            # f"{rc_frack: 13.6e}",
         ])
 
     new_line = "  ".join(row) + "\n"
