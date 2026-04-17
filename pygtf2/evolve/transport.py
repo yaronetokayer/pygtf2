@@ -3,6 +3,8 @@ from numba import njit, float64, types, void
 from pygtf2.util.interpolate import interp_linear_to_interfaces
 from pygtf2.util.calc import solve_tridiagonal_thomas
 
+_TINY64 = np.finfo(np.float64).tiny
+
 ### EXPLICIT METHOD
 
 @njit(void(float64, float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:, :], float64[:, :]), cache=True, fastmath=True)
@@ -249,7 +251,7 @@ def apply_dv2dt(v2, dv2dt, dt_prop, eps_du):
 
     s, N = v2.shape
 
-    floor = 1e-40
+    floor = _TINY64
     dv2max = 0.0
 
     # Find maximum proposed relative change
@@ -390,7 +392,7 @@ def hex_du_max(v2, dv2_work):
     of the codebase.
     """
     s, N = v2.shape
-    floor = 1e-40
+    floor = _TINY64
     du_max = 0.0
 
     for n in range(s):
@@ -548,7 +550,7 @@ def cond_du_max(v2, du_cond):
     Compute max |du|/|u| over all species and cells, where u = 1.5*v2.
     """
     s, N = v2.shape
-    floor = 1e-40
+    floor = _TINY64
     du_max = 0.0
 
     for k in range(s):

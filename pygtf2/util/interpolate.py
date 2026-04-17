@@ -275,9 +275,6 @@ def sum_extensive_loglog(r0, r, x) -> np.ndarray:
 
     return out
 
-import numpy as np
-from numba import njit, float64, int64
-
 @njit(float64[:](float64[:], float64[:, :], float64[:, :], int64), fastmath=True, cache=True)
 def interp_species_loglog(r0, r, x, k):
     """
