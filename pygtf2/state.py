@@ -111,12 +111,13 @@ class State:
         State
             A new State object initialized with the given configuration.
         """
-        from pygtf2.io.write import make_dir, write_metadata, write_profile_snapshot
+        from pygtf2.io.write import make_dir, write_metadata, write_profile_snapshot, write_char_params
 
         state = cls(config)
         state.reset()                                    # Initialize all state variables
 
         make_dir(state)                                  # Create the model directory if it doesn't exist
+        write_char_params(state)                         # Write model characteristic parameters to disk
         write_metadata(state)                            # Write model metadata to disk
         write_profile_snapshot(state, initialize=True)   # Write initial snapshot to disk
 
@@ -138,6 +139,7 @@ class State:
         -------
         State
         """
+        raise RuntimeError("this module is still in development")
         # --- basic checks
         p = Path(model_dir)
         if not p.is_dir():
@@ -205,7 +207,6 @@ class State:
         # thresholds / proposed dt
         prec         = config.prec
         state.dt     = float(prec.eps_dt)
-        state.du_max = float(prec.eps_du)
 
         # quick diagnostics (global)
         state.mintrelax                     = float(np.min(state.trelax))
@@ -651,10 +652,9 @@ class State:
         """
         Resets initial state
         """
-        from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread, mass_fraction_radii, compute_rc_frac
+        from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread, mass_fraction_radii
 
         config = self.config
-        prec = config.prec
 
         self.r = self._setup_grid()
         self.bkg_param = self._set_bkg_param()
@@ -665,7 +665,6 @@ class State:
         self.step_count = 0                 # Global integration step counter (never reset)
         self.snapshot_index = 0             # Counts profile output snapshots
         self.dt = 1e-7                      # Initial time step (will be updated adaptively)
-        self.du_max = prec.eps_du           # Initialize the max du to upper limit
 
         # Species r50 drift metric
         s = config.s
@@ -677,10 +676,6 @@ class State:
         self.mintrelax                  = float(np.min(self.trelax))
         self.rho_c, self.v2_c, self.r_c = calc_rho_v2_r_c(self.rmid, self.rho, self.v2)
         self.r50_spread                 = calc_r50_spread(self.r, self.m, self.r50evo)
-
-        # Species core-dominance metric
-        # self.rc_frac = np.zeros(s)
-        # compute_rc_frac(self.r, self.m, self.r_c, self.rc_frac)
 
         # For diagnostics
         self.dt_cum = 0.0

@@ -4,7 +4,7 @@ from pygtf2.evolve.transport import compute_luminosities, add_dv2dt_conduction, 
 from pygtf2.evolve.hydrostatic import revirialize_interp_gs, revirialize_interp_jacobi, STATUS_SHELL_CROSSING
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binaries_heating
-from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread, compute_rc_frac
+from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
 from pygtf2.dev.debug import plot_r_markers
 
 def run_until_stop(state, start_step, **kwargs):
@@ -23,11 +23,11 @@ def run_until_stop(state, start_step, **kwargs):
     time_i = state.t if time_limit is not None else None
 
     # --- Locals ---
-    config = state.config
-    io = config.io
-    sim = config.sim
-    prec = config.prec
-    char  = state.char
+    config  = state.config
+    io      = config.io
+    sim     = config.sim
+    prec    = config.prec
+    char    = state.char
 
     # Switches
     # evap = sim.evap
@@ -44,16 +44,19 @@ def run_until_stop(state, start_step, **kwargs):
     p = np.empty_like(state.rho, dtype=np.float64)
 
     # Output options
+    t_evol = bool(io.t_evol); profiles = bool(io.profiles)
     chatter = bool(io.chatter); t_halt = float(sim.t_halt); nlog = int(io.nlog); nupdate = int(io.nupdate)
-    rho0_last_prof = float(state.rho_c); rho0_last_tevol = float(state.rho_c)
-    r50_spread_last_tevol = float(state.r50_spread)
     rho_c_halt = float(sim.rho_c_halt)
-    drho_prof = float(io.drho_prof); drho_tevol = float(io.drho_tevol)
-    if np.allclose(mrat, mrat[0]):
-        use_r50 = False
-    else:
-        dr50_tevol = float(io.dr50_tevol)
-        use_r50 = True
+    if t_evol:
+        rho0_last_tevol = float(state.rho_c); drho_tevol = float(io.drho_tevol)
+        r50_spread_last_tevol = float(state.r50_spread)
+        if np.allclose(mrat, mrat[0]):
+            use_r50 = False
+        else:
+            dr50_tevol = float(io.dr50_tevol)
+            use_r50 = True
+    if profiles:
+        rho0_last_prof = float(state.rho_c); drho_prof = float(io.drho_prof)
 
     #################
     ### Main loop ###
@@ -73,7 +76,6 @@ def run_until_stop(state, start_step, **kwargs):
         dt_prop = eps_dt * state.mintrelax
 
         # Integrate time step
-        # integrate_time_step(state, dt_prop, step_count)
         integrate_time_step(state, dt_prop, step_count,
                             conduct_imex, # evap, binaries,         # Switches
                             eps_du, c1, c2, mrat, lnL, bkg_param,   # Parameters
@@ -116,25 +118,28 @@ def run_until_stop(state, start_step, **kwargs):
         #########################
 
         # --- PROFILE OUTPUT ---
-        drho_for_prof = abs((rho0 / rho0_last_prof) - 1.0)
-        if drho_for_prof > drho_prof:
-            rho0_last_prof = rho0
-            write_profile_snapshot(state)
+        if profiles:
+            drho_for_prof = abs((rho0 / rho0_last_prof) - 1.0)
+            if drho_for_prof > drho_prof:
+                rho0_last_prof = rho0
+                write_profile_snapshot(state)
+                write_time_evolution(state) # Always have a time evolution column concurrent with a profile
 
         # --- TIME EVOLUTION OUTPUT ---
-        drho_for_tevol = abs((rho0 / rho0_last_tevol) - 1.0)
-        want_tevol = drho_for_tevol > drho_tevol
+        if t_evol:
+            drho_for_tevol = abs((rho0 / rho0_last_tevol) - 1.0)
+            want_tevol = drho_for_tevol > drho_tevol
 
-        if use_r50:
-            denom = r50_spread_last_tevol if abs(r50_spread_last_tevol) > 1e-100 else 1e-100
-            r50_spread_for_tevol = abs((r50_spread - r50_spread_last_tevol) / denom)
-            if r50_spread_for_tevol > dr50_tevol:
-                want_tevol = True
+            if use_r50:
+                denom = r50_spread_last_tevol if abs(r50_spread_last_tevol) > 1e-100 else 1e-100
+                r50_spread_for_tevol = abs((r50_spread - r50_spread_last_tevol) / denom)
+                if r50_spread_for_tevol > dr50_tevol:
+                    want_tevol = True
 
-        if want_tevol:
-            rho0_last_tevol = rho0
-            r50_spread_last_tevol = r50_spread
-            write_time_evolution(state)
+            if want_tevol:
+                rho0_last_tevol = rho0
+                r50_spread_last_tevol = r50_spread
+                write_time_evolution(state)
 
         ##############
         ### 4. Log ###
@@ -165,6 +170,16 @@ def integrate_time_step(state, dt_prop, step_count,     # State
         Proposed dt value returned by compute_time_step
     step_count : int
         Step count
+    conduct_imex : bool
+        Whether to use IMEX method for conduction step.
+    eps_du : float
+        Maximum allowed fractional change in v2 per time step.
+    c1, c2, mrat, lnL : float or array-like
+        Model parameters.
+    bkg_param : dict
+        Background potential parameters.
+    p : ndarray (N,)
+        Memory allocation for working array.
     """
     # Allocations
     r           = np.asarray(state.r,       dtype=np.float64)
@@ -207,8 +222,7 @@ def integrate_time_step(state, dt_prop, step_count,     # State
     #     v2_cond, p, eps_max = binaries_heating(rmid_orig, rho, v2_cond, dt_prop)
 
     ### Step 2: Reestablish hydrostatic equilibrium ###
-    p[:,:] = rho * v2
-
+    np.multiply(rho, v2, out=p) # p = rho * v2
     status = revirialize_interp_jacobi(r, rho, p, m, bkg_param) # Modifies r, rho, p in place
 
     # Shell crossing
@@ -217,22 +231,21 @@ def integrate_time_step(state, dt_prop, step_count,     # State
         
     ### Step 3: Update state variables ###
 
-    state.r         = r
-    state.rho       = rho
-    v2_new          = p / rho
-    state.v2        = v2_new
-    state.du_max    = du_max
+    # r and rho were modified in place already; no need to assign them
+    # Still need to update v2 based on the new p and rho
+    np.divide(p, rho, out=state.v2)
     # if evap:
     #     state.m = m
 
-    rmid            = 0.5 * (r[:, 1:] + r[:, :-1])
-    state.rmid      = rmid
-    state.trelax    = v2_new**(3.0/2.0) / rho
+    np.add(r[:, 1:], r[:, :-1], out=state.rmid)
+    state.rmid *= 0.5
 
-    state.mintrelax                     = float(np.min(state.trelax))
-    state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(rmid, rho, v2_new)
+    np.power(state.v2, 1.5, out=state.trelax)
+    state.trelax /= rho
+    state.mintrelax = float(np.min(state.trelax))
+
+    state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(state.rmid, rho, state.v2)
     state.r50_spread                    = calc_r50_spread(r, m, state.r50evo)
-    # compute_rc_frac(r, m, state.r_c, state.rc_frac)
 
     # Diagnostics
     state.dt_cum                += float(dt_prop)

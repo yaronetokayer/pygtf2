@@ -43,89 +43,62 @@ def extract_time_evolution_data(filepath):
     Returns
     -------
     dict
-        {
-          'step'     : array,
-          'time'     : array,
-          'rho_c_tot': array,
-          'v2_c'     : array,
-          'r_c'      : array,
-          'eta_c'    : array,
-          'mintrel'  : array,
-          'species'  : {
-              'dm': {
-                  'rho_c' : array,
-                  'r01' : array,
-                  'r05' : array,
-                  'r10': array,
-                  'r20': array,
-                  'r50': array,
-                  'r90': array,
-              },
-              'stars': { ... },
-              ...
-          },
-          'model_id' : int
-        }
+        Dictionary containing global columns, species sub-dictionaries,
+        and 'model_id'.
     """
-    # Parse header to get column names
+    # Read header
     with open(filepath, "r") as f:
-        header_line = f.readline().strip()
-    colnames = header_line.split()
+        header = f.readline().strip().split()
 
-    # Load numeric data
+    # Load data
     data = np.loadtxt(filepath, skiprows=1)
 
-    # Handle case where data is 1D (only one row)
-    if data.ndim == 1: 
+    # Handle single-row case
+    if data.ndim == 1:
         data = data[np.newaxis, :]
 
-    # Map name -> index
-    idx = {name: j for j, name in enumerate(colnames)}
+    # Build dictionary dynamically
+    result = {col: data[:, i] for i, col in enumerate(header)}
 
-    # Global quantities
-    out = {
-        'step'     : data[:, idx['step']].astype(int),
-        'time'     : data[:, idx['time']],
-        'rho_c_tot': data[:, idx['rho_c_tot']],
-        'v2_c'     : data[:, idx['v2_c']],
-        'r_c'      : data[:, idx['r_c']],
-        'eta_c'      : data[:, idx['eta_c']],
-        'mintrel'  : data[:, idx['mintrel']],
-        'species'  : {},
-    }
+    # Preserve original structured species behavior
+    result["species"] = {}
 
-    # Per-species blocks
-    for name in colnames:
-        if name.startswith('rho_c['):
-            label = name.split('[',1)[1].rstrip(']')
-            out['species'][label] = {
-                'rho_c' : data[:, idx[f'rho_c[{label}]']],
-                'r01' : data[:, idx[f'r01[{label}]']],
-                'r05' : data[:, idx[f'r05[{label}]']],
-                'r10': data[:, idx[f'r10[{label}]']],
-                'r20': data[:, idx[f'r20[{label}]']],
-                'r50': data[:, idx[f'r50[{label}]']],
-                'r90': data[:, idx[f'r90[{label}]']],
+    for col in header:
+        if col.startswith("rho_c["):
+            label = col.split("[", 1)[1].rstrip("]")
+
+            result["species"][label] = {
+                "rho_c" : result[f"rho_c[{label}]"],
+                "r01"   : result[f"r01[{label}]"],
+                "r05"   : result[f"r05[{label}]"],
+                "r10"   : result[f"r10[{label}]"],
+                "r20"   : result[f"r20[{label}]"],
+                "r50"   : result[f"r50[{label}]"],
+                "r90"   : result[f"r90[{label}]"],
+                "r50evo": result[f"r50evo[{label}]"],
             }
 
-    # Model ID from directory name
+    # Preserve original dtype behavior for step
+    if "step" in result:
+        result["step"] = result["step"].astype(int)
+
+    # Extract model_id from directory name
     model_dir = os.path.basename(os.path.dirname(filepath))
     if model_dir.lower().startswith("model"):
         try:
-            out['model_id'] = int(model_dir.replace("Model", "").replace("model",""))
+            result["model_id"] = int(
+                model_dir.replace("Model", "").replace("model", "")
+            )
         except ValueError:
-            out['model_id'] = None
+            result["model_id"] = None
     else:
-        out['model_id'] = None
+        result["model_id"] = None
 
-    return out
+    return result
 
 def extract_snapshot_indices(model_dir):
     """
     Extract snapshot indices and times from snapshot_conversion.txt.
-
-    Expected columns (with header):
-    index, time, time_Gyr, step
 
     Parameters
     ----------
@@ -134,35 +107,30 @@ def extract_snapshot_indices(model_dir):
 
     Returns
     -------
-    dict with:
-      'snapshot_index' : ndarray[int]
-      't'              : ndarray[float]  # time in code units
-      't_Gyr'          : ndarray[float]  # time in Gyr
-      'step_count'     : ndarray[int]
+    dict
+        Dictionary mapping snapshot_conversion.txt column names to numpy arrays.
     """
     path = os.path.join(model_dir, "snapshot_conversion.txt")
 
-    data = np.loadtxt(path, skiprows=1)
-    if data.ndim == 1:
-        data = data[np.newaxis, :]
+    # Read file with column names from header
+    data = np.genfromtxt(path, names=True, dtype=None, encoding=None)
 
-    # Expect exactly 4 columns: index, time, time_Gyr, step
-    if data.shape[1] != 4:
-        raise ValueError(
-            f"snapshot_conversion.txt should have 4 columns; found {data.shape[1]}"
-        )
+    # Handle single-row case (genfromtxt returns 0-d structured array)
+    if data.shape == ():
+        data = np.array([data], dtype=data.dtype)
 
-    snapshot_index = data[:, 0].astype(int)
-    t              = data[:, 1]
-    t_Gyr          = data[:, 2]
-    step_count     = data[:, 3].astype(int)
+    # Convert structured array to dictionary
+    result = {}
+    for name in data.dtype.names:
+        col = data[name]
 
-    return {
-        'snapshot_index': snapshot_index,
-        't_t0': t,
-        't_Gyr': t_Gyr,
-        'step_count': step_count,
-    }
+        # Optional: cast integer-like columns
+        if np.issubdtype(col.dtype, np.integer):
+            result[name] = col.astype(int)
+        else:
+            result[name] = col
+
+    return result
 
 def get_time_conversion(filepath, index, phys=False):
     """
@@ -188,88 +156,61 @@ def get_time_conversion(filepath, index, phys=False):
     data = extract_snapshot_indices(model_dir)
 
     # Lookup time
-    idx = np.where(data['snapshot_index'] == index)[0][0]
+    idx = np.where(data['index'] == index)[0][0]
     if not phys:
-        t = data['t_t0'][idx]
+        t = data['time'][idx]
     else:
-        t = data['t_Gyr'][idx]
+        t = data['time_Gyr'][idx]
 
     return t
 
-def extract_snapshot_data(filename):
+def extract_snapshot_data(filepath, add_time=True):
     """
-    Extract data from a snapshot timestep file.
-
-    Parameters
-    ----------
-    filename : str
-        Path to the timestep_*.dat file.
-
-    Returns
-    -------
-    dict
-        {
-          'log_r'    : array,
-          'log_rmid' : array,
-          'm_tot'    : array,
-          'rho_tot'  : array,
-          'eta'      : array,
-          'species'  : {
-              'dm': {
-                  'lgr'   : array,
-                  'lgrm'  : array,
-                  'm'     : array,
-                  'rho'   : array,
-                  'v2'    : array,
-                  'trelax': array,
-              },
-              'stars': { ... }
-          },
-          'time' : float (from snapshot_conversion.txt via get_time_conversion)
-        }
+    Extract data from a multi-species snapshot timestep file.
     """
-    # Read header line
-    with open(filename, "r") as f:
-        header_line = f.readline().strip()
-    colnames = header_line.split()
 
-    # Load numeric data
-    data = np.loadtxt(filename, skiprows=1)
+    # Read first line
+    with open(filepath, "r") as f:
+        header = f.readline().strip().split()
+
+    # Load data
+    data = np.loadtxt(filepath, skiprows=1)
+
+    # Handle single-row case
     if data.ndim == 1:
         data = data[np.newaxis, :]
 
-    # Map name -> column
-    idx = {name: j for j, name in enumerate(colnames)}
+    # Build dictionary dynamically
+    raw = {col: data[:, i] for i, col in enumerate(header)}
 
-    out = {
-        'log_r'   : data[:, idx['log_r']],
-        'log_rmid': data[:, idx['log_rmid']],
-        'm_tot'   : data[:, idx['m_tot']],
-        'rho_tot' : data[:, idx['rho_tot']],
-        'eta'     : data[:, idx['eta']],
-        'species' : {},
+    # Start output with non-species columns
+    result = {
+        col: values
+        for col, values in raw.items()
+        if "[" not in col and "]" not in col
     }
 
-    # Detect species blocks
-    for name in colnames:
-        if name.startswith('lgr['):
-            label = name.split('[',1)[1].rstrip(']')
-            out['species'][label] = {
-                'lgr'   : data[:, idx[f'lgr[{label}]']],
-                'lgrm'  : data[:, idx[f'lgrm[{label}]']],
-                'm'     : data[:, idx[f'm[{label}]']],
-                'rho'   : data[:, idx[f'rho[{label}]']],
-                'v2'    : data[:, idx[f'v2[{label}]']],
-                'trelax': data[:, idx[f'trelax[{label}]']],
-            }
+    # Add species dictionary
+    result["species"] = {}
 
-    # Extract timestep number from filename and get time
-    basename = os.path.basename(filename)
-    step = int(basename.replace("profile_", "").replace(".dat", ""))
-    t = get_time_conversion(filename, step)
-    out['time'] = t
+    # Detect and organize species columns
+    for col, values in raw.items():
+        if "[" in col and col.endswith("]"):
+            quantity, label = col.split("[", 1)
+            label = label.rstrip("]")
 
-    return out
+            if label not in result["species"]:
+                result["species"][label] = {}
+
+            result["species"][label][quantity] = values
+
+    # Extract timestep number from filepath and get time
+    if add_time:
+        basename = os.path.basename(filepath)
+        step = int(basename.replace("profile_", "").replace(".dat", ""))
+        result["time"] = get_time_conversion(filepath, step)
+
+    return result
 
 def import_metadata(model_dir: Union[Path, str]) -> Dict[str, Dict[str, Any]]:
     """
@@ -396,20 +337,20 @@ def load_snapshot_bundle(model_dir: Union[str, Path], snapshot: Optional[int] = 
     # Choose which snapshot to load
     if snapshot is None:
         # Latest snapshot is the last entry in the table
-        snap_idx = int(conv["snapshot_index"][-1])
+        snap_idx = int(conv["index"][-1])
     else:
         snap_idx = int(snapshot)  # ensure int
         # sanity: ensure it exists in the table
-        if snap_idx not in set(conv["snapshot_index"].tolist()):
+        if snap_idx not in set(conv["index"].tolist()):
             # not fatal strictly, but helpful to warn early
             raise ValueError(
                 f"Snapshot index {snap_idx} not present in snapshot_conversion.txt "
-                f"(available: {conv['snapshot_index'].tolist()})"
+                f"(available: {conv['index'].tolist()})"
             )
     # Find the row in conv corresponding to snap_idx
-    row_idx = int(np.where(conv["snapshot_index"] == snap_idx)[0][0])
-    step_val = int(conv["step_count"][row_idx])
-    t_val    = float(conv["t_t0"][row_idx])
+    row_idx = int(np.where(conv["index"] == snap_idx)[0][0])
+    step_val = int(conv["step"][row_idx])
+    t_val    = float(conv["time"][row_idx])
 
     # Resolve the profile file path and load its arrays
     profile_path = pdir / f"profile_{snap_idx}.dat"

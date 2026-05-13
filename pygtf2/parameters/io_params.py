@@ -17,6 +17,10 @@ class IOParams:
         Timesteps between logging output.
     nupdate : int
         Timesteps between updating instantaneous timestep counter visual
+    t_evol : bool
+        Whether to output time evolution data.
+    profiles : bool
+        Whether to output profiles.
     drho_prof : float
         Change in log of central density to trigger writing profiles to disk.
     drho_tevol : float
@@ -32,6 +36,8 @@ class IOParams:
                  base_dir: str = None, 
                  nlog: int = 100000,
                  nupdate: int = 1000,
+                 t_evol : bool = True,
+                 profiles : bool = True,
                  drho_prof : float = 0.1,
                  drho_tevol : float = 0.05,
                  dr50_tevol : float = 0.1,
@@ -42,6 +48,8 @@ class IOParams:
         self._base_dir = None
         self._nlog = nlog
         self._nupdate = nupdate
+        self._t_evol = t_evol
+        self._profiles = profiles
         self._drho_prof = drho_prof
         self._drho_tevol = drho_tevol
         self._dr50_tevol = dr50_tevol
@@ -53,6 +61,8 @@ class IOParams:
         self.base_dir = base_dir or os.getcwd()
         self.nlog = nlog
         self.nupdate = nupdate
+        self.t_evol = t_evol
+        self.profiles = profiles
         self.drho_prof = drho_prof
         self.drho_tevol = drho_tevol
         self.dr50_tevol = dr50_tevol
@@ -122,6 +132,26 @@ class IOParams:
         self._nupdate = value
 
     @property
+    def t_evol(self):
+        return self._t_evol
+
+    @t_evol.setter
+    def t_evol(self, value):
+        if not isinstance(value, bool):
+            raise TypeError("t_evol must be a boolean")
+        self._t_evol = value
+
+    @property
+    def profiles(self):
+        return self._profiles
+
+    @profiles.setter
+    def profiles(self, value):
+        if not isinstance(value, bool):
+            raise TypeError("profiles must be a boolean")
+        self._profiles = value
+
+    @property
     def drho_prof(self):
         return self._drho_prof
     
@@ -178,7 +208,7 @@ class IOParams:
         self._chatter = value
 
     def __repr__(self):
-        all_attrs = ['model_no', 'model_dir', 'base_dir', 'nlog', 'nupdate', 'drho_prof', 'drho_tevol', 'dr50_tevol', 'overwrite', 'chatter']
+        all_attrs = ['model_no', 'model_dir', 'base_dir', 'nlog', 'nupdate', 't_evol', 'profiles', 'drho_prof', 'drho_tevol', 'dr50_tevol', 'overwrite', 'chatter']
         attr_strs = []
 
         for attr in all_attrs:

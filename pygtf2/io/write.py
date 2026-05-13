@@ -84,6 +84,57 @@ def write_metadata(state):
     if io.chatter:
         print(f"Model information written to model_metadata.txt")
 
+def write_char_params(state):
+    """
+    Write characteristic parameters to a file.
+    """
+    char = state.char
+    io = state.config.io
+    filename = os.path.join(io.base_dir, io.model_dir, "char_params.txt")
+
+    names = []
+    values = []
+
+    for key, value in char.__dict__.items():
+
+        if key == "lnL" and value is not None:
+            lnL = np.asarray(value, dtype=float)
+
+            if lnL.ndim != 2 or lnL.shape[0] != lnL.shape[1]:
+                raise ValueError("char.lnL must be a square 2D matrix.")
+
+            # Optional sanity check
+            if not np.allclose(lnL, lnL.T, equal_nan=True):
+                raise ValueError("char.lnL is expected to be symmetric.")
+
+            n = lnL.shape[0]
+
+            # Upper triangle including diagonal
+            for i in range(n):
+                for j in range(i, n):
+                    names.append(f"lnL_{i}_{j}")
+                    values.append(float(lnL[i, j]))
+
+        else:
+            names.append(key)
+            values.append(np.nan if value is None else float(value))
+
+    col_width = 18
+    header = "".join(f"{name:>{col_width}}" for name in names)
+    fmt = f"%{col_width}.8e"
+
+    np.savetxt(
+        filename,
+        [values],
+        header=header,
+        fmt=fmt,
+        delimiter="",
+        comments=""
+    )
+
+    if state.config.io.chatter:
+        print("Characteristic parameters written to char_params.txt")
+
 def write_log_entry(state, start_step):
     """ 
     Append a line to the simulation log file.
@@ -256,7 +307,6 @@ def write_profile_snapshot(state, initialize=False):
             f"{'m['+name+']':>13}",
             f"{'rho['+name+']':>13}",
             f"{'v2['+name+']':>13}",
-            f"{'p['+name+']':>13}",
             f"{'trelax['+name+']':>13}",
         ])
     header_line = "  ".join(header_cols) + "\n"
@@ -336,21 +386,27 @@ def write_time_evolution(state):
     state : State
         The current simulation state.
     """
-    io = state.config.io
-    filepath = os.path.join(io.base_dir, io.model_dir, f"time_evolution.txt")
+    filepath = os.path.join(
+        state.config.io.base_dir,
+        state.config.io.model_dir,
+        "time_evolution.txt"
+    )
+
     step = state.step_count
+    t = state.t
 
     labels = list(state.labels)
     s = len(labels)
-    m_part = state.m_part
 
-    #--- Compute eta_core on the fly
+    # --- Compute eta_core on the fly
     from pygtf2.util.interpolate import sum_intensive_loglog, interp_intensive_loglog
     from pygtf2.util.calc import compute_eta_multi
+
+    m_part = state.m_part
     rmid = state.rmid
     length = 75
-    r_tot = np.zeros((length+1,))
-    r_tot_min = np.min(state.r[:,1])
+    r_tot = np.zeros((length + 1,))
+    r_tot_min = np.min(state.r[:, 1])
     r_tot_max = state.r_c
     r_tot[1:] = np.geomspace(r_tot_min, r_tot_max, num=length, endpoint=True)
     r_totmid = 0.5 * (r_tot[1:] + r_tot[:-1])
@@ -360,81 +416,65 @@ def write_time_evolution(state):
     if s > 1 and np.max(m_part) > np.min(m_part):
         v2_interp = interp_intensive_loglog(r_totmid, rmid, state.v2)
         err = np.zeros(length, dtype=np.float64)
-        compute_eta_multi(m_part, np.sqrt(v2_interp), eta, err) 
-    w = rho_tot * (r_tot[1:]**3 - r_tot[:-1]**3) # Mass weighted
-    eta_c = np.sum(w*eta) / np.sum(w)
+        compute_eta_multi(m_part, np.sqrt(v2_interp), eta, err)
 
-    # Build header
-    header = [
-        f"{'step':>10}",
-        f"{'time':>13}",
-        f"{'rho_c_tot':>13}",
-        f"{'v2_c':>13}",
-        f"{'r_c':>13}",
-        f"{'eta_c':>13}",
-        f"{'mintrel':>13}",
+    w = rho_tot * (r_tot[1:]**3 - r_tot[:-1]**3)
+    eta_c = np.sum(w * eta) / np.sum(w)
+
+    columns = [
+        ("step", step),
+        ("time", t),
+        ("rho_c_tot", state.rho_c),
+        ("v2_c", state.v2_c),
+        ("r_c", state.r_c),
+        ("eta_c", eta_c),
+        ("mintrel", state.mintrelax),
     ]
 
-    # Add per species
-    for name in labels:
-        header.extend([
-            f"{f'rho_c[{name}]':>13}",
-            f"{f'r01[{name}]':>13}",
-            f"{f'r05[{name}]':>13}",
-            f"{f'r10[{name}]':>13}",
-            f"{f'r20[{name}]':>13}",
-            f"{f'r50[{name}]':>13}",
-            f"{f'r90[{name}]':>13}",
-            f"{f'r50evo[{name}]':>13}",
-            # f"{f'rc_frac[{name}]':>13}",
-        ])
-    header = "  ".join(header) + "\n"
+    percents = np.array([0.01, 0.05, 0.10, 0.20, 0.50, 0.90], dtype=np.float64)
 
-    # Build data row
-    row = [ 
-        f"{step:10d}",
-        f"{state.t: 13.6e}",
-        f"{state.rho_c: 13.6e}",
-        f"{state.v2_c: 13.6e}",
-        f"{state.r_c: 13.6e}",
-        f"{eta_c: 13.6e}",
-        f"{state.mintrelax: 13.6e}",
-    ]
-
-    # Add per species
-    percents = np.array([0.01, 0.05, 0.10, 0.20, 0.50, 0.90], dtype=np.float64) # Enclosed mass pcts
     rho = state.rho
     r = state.r
     m = state.m
-    r50evo = state.r50evo[:,1]
-    # rc_frac = state.rc_frac
+    r50evo = state.r50evo[:, 1]
+
     for k, name in enumerate(labels):
         rho_c_k = float(rho[k, 0])
         r50evok = r50evo[k]
-        # rc_frack = rc_frac[k]
 
-        # Expecting: array([r_1%, r_5%, r_10%, r_20%, r_50%, r_90%]) in code units
-        radii = np.asarray(mass_fraction_radii(r[k], m[k], percents), dtype=np.float64)
+        radii = np.asarray(
+            mass_fraction_radii(r[k], m[k], percents),
+            dtype=np.float64
+        )
 
-        row.extend([
-            f"{rho_c_k: 13.6e}",
-            f"{radii[0]: 13.6e}",
-            f"{radii[1]: 13.6e}",
-            f"{radii[2]: 13.6e}",
-            f"{radii[3]: 13.6e}",
-            f"{radii[4]: 13.6e}",
-            f"{radii[5]: 13.6e}",
-            f"{r50evok: 13.6e}",
-            # f"{rc_frack: 13.6e}",
+        columns.extend([
+            (f"rho_c[{name}]", rho_c_k),
+            (f"r01[{name}]", radii[0]),
+            (f"r05[{name}]", radii[1]),
+            (f"r10[{name}]", radii[2]),
+            (f"r20[{name}]", radii[3]),
+            (f"r50[{name}]", radii[4]),
+            (f"r90[{name}]", radii[5]),
+            (f"r50evo[{name}]", r50evok),
         ])
 
-    new_line = "  ".join(row) + "\n"
-    
+    # Build header
+    header = "  ".join(f"{name:>13}" for name, _ in columns) + "\n"
+
+    # Build row
+    formatted_values = []
+    for name, value in columns:
+        if isinstance(value, int):
+            formatted_values.append(f"{value:10d}")
+        else:
+            formatted_values.append(f"{value: 13.6e}")
+
+    new_line = "  ".join(formatted_values) + "\n"
+
     _update_file(filepath, header, new_line, step)
 
-    if io.chatter:
-        if step == 0:
-            print("Time evolution file initialized.")
+    if state.config.io.chatter and step == 0:
+        print("Time evolution file initialized.")
 
 def _update_file(filepath, header, new_line, index):
     """

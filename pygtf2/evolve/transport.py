@@ -1,5 +1,6 @@
 import numpy as np 
 from numba import njit, float64, types, void
+import math
 from pygtf2.util.interpolate import interp_linear_to_interfaces
 from pygtf2.util.calc import solve_tridiagonal_thomas
 
@@ -434,6 +435,127 @@ def hex_limit_dt(v2, dv2_work, dt, eps_du):
 
 @njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64, float64), cache=True, fastmath=True)
 def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
+    """
+    Construct tridiagonal coefficients: a_i du_i-1 + b_i du_i + c_i du_i+1 = d_i
+    a, b, c, and d are updated in place
+
+    Arguments
+    ---------
+    a : ndarray, shape (N,)
+        Subdiagonal coefficients (multiply du_{i-1}) for interior nodes j=1..N.
+    b : ndarray, shape (N,)
+        Main diagonal coefficients (multiply du_i) for interior nodes.
+    c : ndarray, shape (N,)
+        Superdiagonal coefficients (multiply d_{u+1}) for interior nodes.
+    d : ndarray, shape (N,)
+        Right-hand side vector for the interior nodes.
+    rk : ndarray, shape (N+1,)
+        Edge radii.
+    mk : ndarray, shape (N+1,)
+        Enclosed mass at edges.
+    rhok_int : ndarray, shape (N-1,)
+        Densities interpolated to shell edges
+    uk : ndarray, shape (N,)
+        Specific internal energy.
+    pref : float
+        prefactor for species k
+    dt : float
+        timestep
+    """
+    N = uk.shape[0]
+    sqrt2       = 1.41421356237309
+    inv_sqrt2_pref_dt  = 1.0 / (sqrt2 * pref * dt)
+
+    ### First cell ###
+    rL  = rk[0]
+    rR  = rk[1]
+    rRR = rk[2]
+
+    drcR = 0.5 * ( rRR - rL )
+    rR2  = rR * rR
+    coefR = rhok_int[0] * rR2 / drcR
+
+    uC = uk[0]
+    uR = uk[1]
+
+    duR         = uR - uC
+    suR         = uR + uC
+    inv_sqrt_suR    = 1.0 / math.sqrt(suR)
+    inv_suR32       = inv_sqrt_suR / suR
+    common_p_R = inv_sqrt_suR + 0.5 * duR * inv_suR32
+    common_m_R = inv_sqrt_suR - 0.5 * duR * inv_suR32
+
+    a[0] = 0.0
+    b[0] = -common_p_R - mk[1] * inv_sqrt2_pref_dt / coefR
+    c[0] = common_m_R
+    d[0] = - duR * inv_sqrt_suR
+
+    ### Interior cells ###
+    # Initilize sliding window
+    rL  = rR
+    rR  = rRR
+    rRR = rk[3]
+
+    drcR    = 0.5 * ( rRR - rL )
+    rR2     = rR * rR
+    coefL   = coefR
+    coefR   = rhok_int[1] * rR2 / drcR
+
+    uC = uR
+    uR = uk[2]
+
+    duL             = duR
+    duR             = uR - uC
+    suR             = uR + uC
+    inv_sqrt_suL    = inv_sqrt_suR
+    inv_sqrt_suR    = 1.0 / math.sqrt(suR)
+    inv_suR32       = inv_sqrt_suR / suR
+
+    common_p_L = common_p_R
+    common_m_L = common_m_R
+    common_p_R = inv_sqrt_suR + 0.5 * duR * inv_suR32
+    common_m_R = inv_sqrt_suR - 0.5 * duR * inv_suR32
+
+    for j in range(1, N - 1):
+        a[j] = coefL * common_p_L
+        b[j] = - coefR * common_p_R - coefL * common_m_L - inv_sqrt2_pref_dt * ( mk[j + 1] - mk[j] )
+        c[j] = coefR * common_m_R
+        d[j] = coefL * duL * inv_sqrt_suL - coefR * duR * inv_sqrt_suR
+
+        # Advance sliding window
+        if j < N - 2:
+            rL  = rR
+            rR  = rRR
+            rRR = rk[j + 3]
+
+            drcR    = 0.5 * ( rRR - rL )
+            rR2     = rR * rR
+            coefL   = coefR
+            coefR   = rhok_int[j + 1] * rR2 / drcR
+
+            uC = uR
+            uR = uk[j + 2]
+
+            duL             = duR
+            duR             = uR - uC
+            suR             = uR + uC
+            inv_sqrt_suL    = inv_sqrt_suR
+            inv_sqrt_suR    = 1.0 / math.sqrt(suR)
+            inv_suR32       = inv_sqrt_suR / suR
+
+            common_p_L = common_p_R
+            common_m_L = common_m_R
+            common_p_R = inv_sqrt_suR + 0.5 * duR * inv_suR32
+            common_m_R = inv_sqrt_suR - 0.5 * duR * inv_suR32
+
+    ### Last cell ###
+    a[N - 1] = common_p_R
+    b[N - 1] = - common_m_R - inv_sqrt2_pref_dt * ( mk[N] - mk[N - 1] ) / coefR
+    c[N - 1] = 0.0
+    d[N - 1] = duR * inv_sqrt_suR
+
+@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64, float64), cache=True, fastmath=True)
+def build_tridiag_system_VEC(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     """
     Construct tridiagonal coefficients: a_i du_i-1 + b_i du_i + c_i du_i+1 = d_i
     a, b, c, and d are updated in place

@@ -296,7 +296,30 @@ def conduct_heat(m, u, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1) -> tuple[np.
 
     return p_new, v2_new, float(dumax), float(dt_eff)
 
+### OLD FUNCTION to compute rc_frac
 
+@njit((float64[:, :], float64[:, :], float64, float64[:]), fastmath=True, cache=True)
+def compute_rc_frac(r, m, r_c, rc_frac):
+    """
+    Compute f_k = M_k(<r_c)/Mtot(<r_c) for each species, in place
+
+    Arguments
+    ---------
+    r : array-like, shape (s, N+1)
+        Radii arrays per species
+    m : array-like, shape (s, N+1)
+        Mass arrays per species
+    r_c : float
+        Core radius
+    f_k : array-like, shape (s,)
+        f_k for each species
+    """
+    s, _ = r.shape
+
+    denom = sum_extensive_loglog_single(r_c, r, m)
+    for k in range(s):
+        rc_frac[k] = interp_species_loglog_single(r_c, r, m, k) / denom
+        
 ### OLD Machinery to throttle the output
 from collections import deque
 

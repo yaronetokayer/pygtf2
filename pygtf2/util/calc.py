@@ -394,25 +394,3 @@ def calc_r50_spread(r, m, r50evo):
     r50_mean = r50_sum / s
 
     return (r50_max - r50_min) / r50_mean
-
-@njit((float64[:, :], float64[:, :], float64, float64[:]), fastmath=True, cache=True)
-def compute_rc_frac(r, m, r_c, rc_frac):
-    """
-    Compute f_k = M_k(<r_c)/Mtot(<r_c) for each species, in place
-
-    Arguments
-    ---------
-    r : array-like, shape (s, N+1)
-        Radii arrays per species
-    m : array-like, shape (s, N+1)
-        Mass arrays per species
-    r_c : float
-        Core radius
-    f_k : array-like, shape (s,)
-        f_k for each species
-    """
-    s, _ = r.shape
-
-    denom = sum_extensive_loglog_single(r_c, r, m)
-    for k in range(s):
-        rc_frac[k] = interp_species_loglog_single(r_c, r, m, k) / denom
