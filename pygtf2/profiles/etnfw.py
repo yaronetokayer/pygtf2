@@ -8,6 +8,8 @@ def _etnfw_velocity_integrand(x, bkg_param):
 
     rho(r) = (Mtot / 4*pi*r_s^3) * (r_s / r) * e^{-r/r_s} 
 
+    e.g., https://doi.org/10.1093/mnras/stab1215
+
     Units:
         Mtot = 1
         r_s = 1
