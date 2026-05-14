@@ -25,6 +25,10 @@ PROFILE_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "applicable": {"r_s", "W0", "z"}, # r_s is core radius
         "defaults":   {"r_s": 0.0025, "W0": 5.0, "z": 0.0},
     },
+    "etnfw": {
+        "applicable": {"r_s", "z"},
+        "defaults":   {"r_s": 0.0025, "z": 0.0},
+    },
 }
 
 def _norm_prof(p: str) -> str:

@@ -340,7 +340,7 @@ class State:
             char.fc = float(fNFW(cvir))
             char.m_s = mtot / char.fc / float(const.xhubble)
         
-        elif profile in ['exp', 'king']:
+        elif profile in ['exp', 'king', 'etnfw']:
             char.r_s = float(rs)
             char.m_s = float(mtot)
 
