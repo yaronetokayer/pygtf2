@@ -76,7 +76,7 @@ def write_metadata(state):
         return lines
 
     with open(filename, "w") as f:
-        f.write(f"Model {io.model_no:03d} Metadata\n")
+        f.write(f"Model {io.model_no:05d} Metadata\n")
         f.write("=" * 40 + "\n\n")
         for line in dump_container(state.config):
             f.write(line + "\n")
@@ -465,9 +465,9 @@ def write_time_evolution(state):
     formatted_values = []
     for name, value in columns:
         if isinstance(value, int):
-            formatted_values.append(f"{value:10d}")
+            formatted_values.append(f"{value:13d}")
         else:
-            formatted_values.append(f"{value: 13.6e}")
+            formatted_values.append(f"{value:13.6e}")
 
     new_line = "  ".join(formatted_values) + "\n"
 

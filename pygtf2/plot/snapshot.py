@@ -232,7 +232,7 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', xaxis=None, base_dir=No
     xaxis : list of str, optional
         X-axis for profiles to plot.  Default is 'r'.  Other option is 'm'.
     base_dir : str, optional
-        Required if any model is passed as an integer.  The directory in which all ModelXXX subdirectories reside.
+        Required if any model is passed as an integer.  The directory in which all ModelXXXXX subdirectories reside.
     filepath : str, optional
         If provided, save the plot to this file.
     show : bool, optional
@@ -260,7 +260,7 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', xaxis=None, base_dir=No
         elif isinstance(model, int): # Passed model number
             if base_dir is None:
                 raise ValueError("'base_dir' (base directory) must be specified if using model numbers.")
-            model_dir = f"Model{model:03d}"
+            model_dir = f"Model{model:05d}"
             return os.path.join(base_dir, model_dir, f"profile_{ind}.dat")
         else:
             raise TypeError(f"Unrecognized model type: {type(model)}. Must be a State object, Config object, or integer.")
@@ -305,9 +305,9 @@ def make_movie(model, filepath=None, base_dir=None, profiles='rho', grid=False, 
     model : State object, Config object, or model_no
         Each model can be a State, Config, or integer model number.
     filepath : str, optional
-        Save the plot to this file.  Defaults to '/base_dir/ModelXXX/movie_{profiles}.mp4'
+        Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_{profiles}.mp4'
     base_dir : str, optional
-        Required if any model is passed as an integer.  The directory in which all ModelXXX subdirectories reside.
+        Required if any model is passed as an integer.  The directory in which all ModelXXXXX subdirectories reside.
     profiles : str or list of str, optional
         Profiles to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax', 'kn'
     grid : bool, optional
@@ -331,7 +331,7 @@ def make_movie(model, filepath=None, base_dir=None, profiles='rho', grid=False, 
     elif isinstance(model, int):        # Passed model number
         if base_dir is None:
             raise ValueError("'base_dir' (base directory) must be specified if using model numbers.")
-        model_dir = f"Model{model:03d}"
+        model_dir = f"Model{model:05d}"
         model_dir = os.path.join(base_dir, model_dir)
     else:
         raise TypeError(f"Unrecognized model type: {type(model)}. Must be a State object, Config object, or integer.")
@@ -418,9 +418,9 @@ def make_movie_deluxe(model, profiles=None, insets=None, xaxis=None, add_radii=N
         List of radii to add to profiles from time_evolution.txt
         Options: 'r_c', 'r_50[heavy]', etc
     filepath : str, optional
-        Save the plot to this file.  Defaults to '/base_dir/ModelXXX/movie_deluxe.mp4'
+        Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_deluxe.mp4'
     base_dir : str, optional
-        Required if any model is passed as an integer.  The directory in which all ModelXXX subdirectories reside.
+        Required if any model is passed as an integer.  The directory in which all ModelXXXXX subdirectories reside.
     grid : bool, optional
         If True, shows grid on axes
     fps : int, optional
@@ -474,7 +474,7 @@ def make_movie_deluxe(model, profiles=None, insets=None, xaxis=None, add_radii=N
     elif isinstance(model, int):        # Passed model number
         if base_dir is None:
             raise ValueError("'base_dir' (base directory) must be specified if using model numbers.")
-        model_dir = f"Model{model:03d}"
+        model_dir = f"Model{model:05d}"
         model_dir = os.path.join(base_dir, model_dir)
     else:
         raise TypeError(f"Unrecognized model type: {type(model)}. Must be a State object, Config object, or integer.")

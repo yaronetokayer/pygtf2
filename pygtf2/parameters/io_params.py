@@ -7,12 +7,12 @@ class IOParams:
     Attributes
     ----------
     model_no : int
-        Integer identifier for the model run (must be 0 <= model_no < 1000).
+        Integer identifier for the model run (must be 0 <= model_no < 100000).
         Doesn't evaluate until accessed, at which point it default to the next available model_no in the base_dir
     base_dir : str
         Path to the main directory where output files are written.
     model_dir : str
-        Subdirectory named 'ModelXXX', where XXX is zero-padded model number.
+        Subdirectory named 'ModelXXXXX', where XXXXX is zero-padded model number.
     nlog : int
         Timesteps between logging output.
     nupdate : int
@@ -78,28 +78,28 @@ class IOParams:
                 for name in os.listdir(self.base_dir)
                 if name.startswith("Model") and name[5:].isdigit()
             }
-            for i in range(1000):
+            for i in range(100000):
                 if i not in existing:
                     self._model_no = i
                     if self.chatter:
                         print(f"'model_no' set to {i}")
                     break
             else:
-                raise RuntimeError("No available model numbers (0–999) in base_dir")
+                raise RuntimeError("No available model numbers (0–99999) in base_dir")
         return self._model_no
 
     @model_no.setter
     def model_no(self, value):
         if not isinstance(value, int):
             raise TypeError("model_no must be an integer")
-        if not (0 <= value < 1000):
-            raise ValueError("model_no must be between 0 and 999 (inclusive)")
+        if not (0 <= value < 100000):
+            raise ValueError("model_no must be between 0 and 99999 (inclusive)")
         self._model_no = value
 
     @property
     def model_dir(self):
-        """Returns the subdirectory name as 'ModelXXX' (with leading zeros)."""
-        return f"Model{self.model_no:03d}"
+        """Returns the subdirectory name as 'ModelXXXXX' (with leading zeros)."""
+        return f"Model{self.model_no:05d}"
 
     @property
     def base_dir(self):
@@ -219,7 +219,7 @@ class IOParams:
                     if self._model_no is None:
                         value = "<not evaluated>"
                     else:
-                        value = f"Model{self._model_no:03d}"
+                        value = f"Model{self._model_no:05d}"
                 else:
                     value = getattr(self, attr)
             except Exception:

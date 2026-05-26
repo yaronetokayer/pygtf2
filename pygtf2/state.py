@@ -789,7 +789,7 @@ class State:
         Arguments
         ---------
         filepath : str, optional
-            Save the plot to this file.  Defaults to '/base_dir/ModelXXX/movie_{profiles}.mp4'
+            Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_{profiles}.mp4'
         profiles : str or list of str, optional
             Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta', 'p', 'trelax', 'kn'
         grid : bool, optional
