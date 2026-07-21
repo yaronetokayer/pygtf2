@@ -710,8 +710,7 @@ def conduction_imex(
     du_max : float
         Maximum realized fractional change from either operator.
         For hex this is max |dv2|/|v2|, and for conduction it is
-        max |du|/|u|. These are equivalent fractional diagnostics
-        under your naming convention.
+        max |du|/|u|. These are equivalent fractional diagnostics.
     dt_eff : float
         Effective shared timestep accepted for this split step.
         For Strang this is the full-step dt_eff, so each hex half-step
