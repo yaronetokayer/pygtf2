@@ -167,6 +167,7 @@ def write_log_entry(state, start_step):
         f"{'r_c':>12}",
         f"{'r50_spread':>10}",
         f"{'<du lim>':>8}",
+        f"{'<n_iter_du>':>11}",
     ]
 
     header = "  ".join(header_cols) + "\n"
@@ -183,6 +184,7 @@ def write_log_entry(state, start_step):
             f"{state.r_c:12.6e}",
             f"{state.r50_spread:10.4e}",
             f"{'N/A':>8}",                  # <du lim>
+            f"{'N/A':>11}",                  # <n_iter_du>
         ]
 
     else:
@@ -196,13 +198,14 @@ def write_log_entry(state, start_step):
             f"{state.r_c:12.6e}",
             f"{state.r50_spread:10.4e}",
             f"{state.du_max_cum / prec.eps_du / nlog:8.2e}",
+            f"{state.n_iter_du / nlog:11.5e}"
         ]
 
     new_line = "  ".join(row) + "\n"
 
     _update_file(filepath, header, new_line, step)
 
-    state.n_iter_dr = 0
+    state.n_iter_du = 0
     state.dt_cum = 0.0
     state.du_max_cum = 0.0
 
