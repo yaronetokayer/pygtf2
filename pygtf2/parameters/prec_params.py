@@ -16,18 +16,18 @@ class PrecisionParams:
 
     def __init__(
         self,
-        eps_du : float = 1.0e-3,
-        eps_dt : float = 1.0e-3,
+        eps_du : float = 1.0e-4,
+        max_iter_du : int = 50,
         epsabs : float = 1e-6,
         epsrel : float = 1e-6
     ):
         self._eps_du = None
-        self._eps_dt = None
+        self._max_iter_du = None
         self._epsabs = None
         self._epsrel = None
 
         self.eps_du = eps_du
-        self.eps_dt = eps_dt
+        self.max_iter_du = max_iter_du
         self.epsabs = epsabs
         self.epsrel = epsrel
 
@@ -41,13 +41,13 @@ class PrecisionParams:
         self._eps_du = float(value)
 
     @property
-    def eps_dt(self):
-        return self._eps_dt
+    def max_iter_du(self):
+        return self._max_iter_du
 
-    @eps_dt.setter
-    def eps_dt(self, value):
-        self._validate_positive(value, "eps_dt")
-        self._eps_dt = float(value)
+    @max_iter_du.setter
+    def max_iter_du(self, value):
+        self._validate_nonnegative_int(value, "max_iter_du")
+        self._max_iter_du = int(value)
 
     @property
     def epsabs(self):

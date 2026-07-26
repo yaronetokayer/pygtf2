@@ -166,7 +166,6 @@ def write_log_entry(state, start_step):
         f"{'v2_c':>12}",
         f"{'r_c':>12}",
         f"{'r50_spread':>10}",
-        f"{'<dt lim>':>8}",
         f"{'<du lim>':>8}",
     ]
 
@@ -183,7 +182,6 @@ def write_log_entry(state, start_step):
             f"{state.v2_c:12.6e}",
             f"{state.r_c:12.6e}",
             f"{state.r50_spread:10.4e}",
-            f"{'N/A':>8}",                  # <dt lim>
             f"{'N/A':>8}",                  # <du lim>
         ]
 
@@ -197,7 +195,6 @@ def write_log_entry(state, start_step):
             f"{state.v2_c:12.6e}",
             f"{state.r_c:12.6e}",
             f"{state.r50_spread:10.4e}",
-            f"{state.dt_over_trelax_cum / prec.eps_dt / nlog:8.2e}",
             f"{state.du_max_cum / prec.eps_du / nlog:8.2e}",
         ]
 
@@ -208,7 +205,6 @@ def write_log_entry(state, start_step):
     state.n_iter_dr = 0
     state.dt_cum = 0.0
     state.du_max_cum = 0.0
-    state.dt_over_trelax_cum = 0.0
 
     if chatter:
         if step == 0:
@@ -226,7 +222,7 @@ def write_profile_snapshot(state, initialize=False):
         i, log_r, log_rmid,
         m_tot, rho_tot, eta
         [for each species in state.labels in order:]
-            m[<label>], rho[<label>], v2[<label>], p[<label>], trelax[<label>]
+            m[<label>], rho[<label>], v2[<label>], p[<label>]
 
     Arguments
     ---------
@@ -307,7 +303,6 @@ def write_profile_snapshot(state, initialize=False):
             f"{'m['+name+']':>13}",
             f"{'rho['+name+']':>13}",
             f"{'v2['+name+']':>13}",
-            f"{'trelax['+name+']':>13}",
         ])
     header_line = "  ".join(header_cols) + "\n"
 
@@ -332,7 +327,6 @@ def write_profile_snapshot(state, initialize=False):
                     f"{state.m[k, i+1]: 13.6e}",
                     f"{state.rho[k, i]: 13.6e}",
                     f"{state.v2[k, i]: 13.6e}",
-                    f"{state.trelax[k, i]: 13.6e}",
                 ])
             f.write("  ".join(row) + "\n")
     
@@ -428,7 +422,6 @@ def write_time_evolution(state):
         ("v2_c", state.v2_c),
         ("r_c", state.r_c),
         ("eta_c", eta_c),
-        ("mintrel", state.mintrelax),
     ]
 
     percents = np.array([0.01, 0.05, 0.10, 0.20, 0.50, 0.90], dtype=np.float64)

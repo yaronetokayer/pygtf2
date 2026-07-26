@@ -507,10 +507,7 @@ class State:
         Sets the following attributes:
             - m: Enclosed mass at r[i+1]
             - rho: Density in each shell (size ngrid)
-            - p: Pressure in each shell
-            - u: Internal energy in each shell
             - v2: Velocity dispersion squared in each shell
-            - trelax: Relaxation time in each shell
         """
         from pygtf2.profiles.profile_init_routines import menc, sigr
         config = self.config
@@ -575,13 +572,10 @@ class State:
         p[:, 0] = p[:, 1] + srho_c * dr_c * m_enc_c / (4.0 * r_c**2)
         v2[:, 0] = p[:, 0] / rho[:, 0]
 
-        trelax = v2**(3.0/2.0) / rho
-
         self.m          = m
         self.rmid       = r_mid
         self.rho        = rho
         self.v2         = v2
-        self.trelax     = trelax
 
     def _ensure_hydrostatic_equilibrium(self):
         """
@@ -607,12 +601,27 @@ class State:
             print(f"\tInitial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
 
         # --- Iterative revir ---
+        # Preallocate arrays
+        s, Np1 = r_new.shape
+        n_int = Np1 - 2
+        a  = np.empty(n_int, dtype=np.float64)
+        b  = np.empty(n_int, dtype=np.float64)
+        c  = np.empty(n_int, dtype=np.float64)
+        y  = np.empty(n_int, dtype=np.float64)
+        xk  = np.empty(n_int, dtype=np.float64)
+        vol_old = np.empty(Np1 - 1, dtype=np.float64)
+        K_all   = np.empty((s, Np1), dtype=np.float64)
+        m_tot_all = np.empty((s, Np1), dtype=np.float64)
+
         eps_dr = 1e-10
         i = 0
         while True:
             i += 1
             # status, dr_max_new, he_res = revirialize_interp_gs_diagnostics(r_new, rho_new, p_new, m, bkg_param)
-            status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(r_new, rho_new, p_new, m, bkg_param)
+            status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(
+                r_new, rho_new, p_new, m, bkg_param,
+                a, b, c, y, xk, vol_old, K_all, m_tot_all,
+                )
             
             if status == STATUS_SHELL_CROSSING:
                 raise RuntimeError(f"Initial revir iter {i}: Shell crossing!")
@@ -642,8 +651,7 @@ class State:
         self.r = r_new
         self.rho = rho_new
         self.v2 = v2_new
-        self.rmid = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
-        self.trelax = v2_new**(3.0/2.0) / rho_new
+        self.rmid[:,:] = 0.5 * (r_new[:, 1:] + r_new[:, :-1])
 
         if chatter:
             print(f"\tHydrostatic equilibrium achieved in {i} iterations. Max |dr/r| = {dr_max_new:.2e}.  HE res {he_res}")
@@ -665,6 +673,7 @@ class State:
         self.step_count = 0                 # Global integration step counter (never reset)
         self.snapshot_index = 0             # Counts profile output snapshots
         self.dt = 1e-7                      # Initial time step (will be updated adaptively)
+        self.du_max = 0.0                   # Max du of most recent step (used for adaptive time stepping)
 
         # Species r50 drift metric
         s = config.s
@@ -673,14 +682,14 @@ class State:
         for k in range(s):
             self.r50evo[k,0] = mass_fraction_radii(self.r[k], self.m[k], frac)[0]
 
-        self.mintrelax                  = float(np.min(self.trelax))
         self.rho_c, self.v2_c, self.r_c = calc_rho_v2_r_c(self.rmid, self.rho, self.v2)
         self.r50_spread                 = calc_r50_spread(self.r, self.m, self.r50evo)
 
         # For diagnostics
-        self.dt_cum = 0.0
+        self.n_iter_du = 0
+
+        self.dt_cum     = 0.0
         self.du_max_cum = 0.0
-        self.dt_over_trelax_cum = 0.0
 
         if config.io.chatter:
             print("State initialized.")
@@ -768,7 +777,7 @@ class State:
         snapshots : int or list of int, optional
             Snapshot indices to plot, default is the current state
         profiles : str or list of str, optional
-            Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta, 'p', 'trelax', 'kn'
+            Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta, 'p', 'kn'
         filepath : str, optional
             If provided, save the plot to this file.
         show : bool, optional
@@ -791,7 +800,7 @@ class State:
         filepath : str, optional
             Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_{profiles}.mp4'
         profiles : str or list of str, optional
-            Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta', 'p', 'trelax', 'kn'
+            Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta', 'p', 'kn'
         grid : bool, optional
             If True, shows grid on axes
         fps : int, optional

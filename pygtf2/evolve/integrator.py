@@ -34,7 +34,7 @@ def run_until_stop(state, start_step, **kwargs):
 
     # Parameters
     c1 = float(char.c1); c2 = float(char.c2)
-    eps_du = float(prec.eps_du); eps_dt = prec.eps_dt
+    eps_du = float(prec.eps_du); max_iter_du = prec.max_iter_du
     mrat = state.mrat; lnL = char.lnL
     bkg_param = state.bkg_param
 
@@ -69,6 +69,8 @@ def run_until_stop(state, start_step, **kwargs):
     if profiles:
         rho0_last_prof = float(state.rho_c); drho_prof = float(io.drho_prof)
 
+    safety = 0.99 # For timestepping
+
     #################
     ### Main loop ###
     #################
@@ -84,12 +86,19 @@ def run_until_stop(state, start_step, **kwargs):
         step_count = state.step_count
 
         # Compute proposed dt
-        dt_prop = eps_dt * state.mintrelax
+        if step_count == 1:
+            dt_prop = 1.0 # We have no maxdu yet
+
+        else:         
+            #--- du-limited dt using proportional control
+            err = eps_du / state.du_max
+            fac = safety * err
+            dt_prop = fac * state.dt
 
         # Integrate time step
         integrate_time_step(state, dt_prop, step_count,
                             conduct_imex, # evap, binaries,         # Switches
-                            eps_du, c1, c2, mrat, lnL, bkg_param,   # Parameters
+                            eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param,   # Parameters
                             work_sn1, work_sn2,                     # Preallocated arrays
                             work_snout,
                             work_n1, work_n2, work_n3, work_n4,
@@ -168,7 +177,7 @@ def run_until_stop(state, start_step, **kwargs):
 
 def integrate_time_step(state, dt_prop, step_count,                 # State
                         conduct_imex, # evap, binaries,               # Switches
-                        eps_du,
+                        eps_du, max_iter_du,
                         c1, c2, mrat, lnL, bkg_param,               # Parameters
                         work_sn1, work_sn2,                         # Preallocated arrays
                         work_snout,
@@ -191,6 +200,8 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Whether to use IMEX method for conduction step.
     eps_du : float
         Maximum allowed fractional change in v2 per time step.
+    max_iter_du : int
+        Maximum number of allowed iterations for conduction.
     c1, c2, mrat, lnL : float or array-like
         Model parameters.
     bkg_param : dict
@@ -217,7 +228,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     # IMEX METHOD
     if conduct_imex:
         order = STRANG_SPLIT
-        du_max, dt_prop = conduct_imex_dulim(
+        du_max, dt_prop, iter_du = conduct_imex_dulim(
             v2, rho, r, m,
             c1, c2, mrat, lnL,
             work_sn1, work_sn2, work_n1, work_n2, work_n3, work_n4,
@@ -233,6 +244,9 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         add_dv2dt_hex(v2, rho, lnL, mrat, r, c1, dv2dt)
         du_max, dt_prop = apply_dv2dt(v2, dv2dt, dt_prop, eps_du)
 
+    if iter_du == -1:
+        raise RuntimeError(f"Step {step_count}: Max iterations exceeded in conduction step.")
+
     # Apply evaporation
     # if evap:
     #     evaporate(r, rmid_orig, m, v2_cond, rho, dt_prop) # Modifies rho and m in place
@@ -242,8 +256,9 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     # if binaries:
     #     v2_cond, p, eps_max = binaries_heating(rmid_orig, rho, v2_cond, dt_prop)
 
-    ### Step 2: Reestablish hydrostatic equilibrium ###
     np.multiply(rho, v2, out=work_sn1) # work_sn1 used for p
+
+    ### Step 2: Reestablish hydrostatic equilibrium ###
     status = revirialize_interp_jacobi(
         r, rho, work_sn1, m, bkg_param,
         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
@@ -265,17 +280,14 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     np.add(r[:, 1:], r[:, :-1], out=state.rmid)
     state.rmid *= 0.5
 
-    np.power(state.v2, 1.5, out=state.trelax)
-    state.trelax /= rho
-    state.mintrelax = float(np.min(state.trelax))
-
     state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(state.rmid, rho, state.v2)
     state.r50_spread                    = calc_r50_spread(r, m, state.r50evo)
 
     # Diagnostics
-    state.dt_cum                += float(dt_prop)
-    state.du_max_cum            += float(du_max)
-    state.dt_over_trelax_cum    += float(dt_prop / state.mintrelax)
+    state.n_iter_du     += iter_du
+    state.dt_cum        += float(dt_prop)
+    state.du_max_cum    += float(du_max)
 
+    state.du_max  = float(du_max)
     state.dt = float(dt_prop)
     state.t += float(dt_prop)
