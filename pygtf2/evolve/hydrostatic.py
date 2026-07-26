@@ -599,8 +599,28 @@ def revirialize_interp_gs(r, rho, p, m, bkg_param) -> int:
 
     return STATUS_OK
 
-@njit(int64(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]), cache=True, fastmath=True)
-def revirialize_interp_jacobi(r, rho, p, m, bkg_param) -> int:
+@njit(
+    int64(
+        float64[:, :], # r
+        float64[:, :], # rho
+        float64[:, :], # p
+        float64[:, :], # m
+        float64[:],    # bkg_param
+        float64[:],    # a 
+        float64[:],    # b
+        float64[:],    # c 
+        float64[:],    # y
+        float64[:],    # xk
+        float64[:, :], # vol_old
+        float64[:, :], # K_all
+        float64[:, :], # m_tot_all
+    ), 
+    cache=True, fastmath=True,
+)
+def revirialize_interp_jacobi(
+    r, rho, p, m, bkg_param,
+    a, b, c, y, xk, vol_old, K_all, m_tot_all,
+    ) -> int:
     """
     Multi-species re-virialization, Jacobi-style in the inter-species coupling.
 
@@ -630,15 +650,6 @@ def revirialize_interp_jacobi(r, rho, p, m, bkg_param) -> int:
     """
     s, Np1 = r.shape
     add_bkg_flag = bkg_param[0] != -1
-
-    n_int   = Np1 - 2
-    a       = np.empty(n_int, dtype=np.float64)
-    b       = np.empty(n_int, dtype=np.float64)
-    c       = np.empty(n_int, dtype=np.float64)
-    y       = np.empty(n_int, dtype=np.float64)
-    xk      = np.empty(n_int, dtype=np.float64)
-    vol_old = np.empty(Np1 - 1, dtype=np.float64)
-    K_all   = np.empty((s, Np1), dtype=np.float64)
 
     # One precomputed enclosed-mass profile per species
     m_tot_all = np.empty((s, Np1), dtype=np.float64)

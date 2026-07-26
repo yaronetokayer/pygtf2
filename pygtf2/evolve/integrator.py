@@ -1,6 +1,6 @@
 import numpy as np 
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
-from pygtf2.evolve.transport import compute_luminosities, add_dv2dt_conduction, add_dv2dt_hex, apply_dv2dt, conduction_imex
+from pygtf2.evolve.transport import compute_luminosities, add_dv2dt_conduction, add_dv2dt_hex, apply_dv2dt, conduct_imex_dulim, HEX_FIRST, COND_FIRST, STRANG_SPLIT
 from pygtf2.evolve.hydrostatic import revirialize_interp_gs, revirialize_interp_jacobi, STATUS_SHELL_CROSSING
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binaries_heating
@@ -24,9 +24,7 @@ def run_until_stop(state, start_step, **kwargs):
 
     # --- Locals ---
     config  = state.config
-    io      = config.io
-    sim     = config.sim
-    prec    = config.prec
+    io      = config.io; sim = config.sim; prec = config.prec
     char    = state.char
 
     # Switches
@@ -41,7 +39,20 @@ def run_until_stop(state, start_step, **kwargs):
     bkg_param = state.bkg_param
 
     # Preallocations
-    p = np.empty_like(state.rho, dtype=np.float64)
+    N = config.grid.ngrid
+    Nm1 = N - 1
+    work_sn1    = np.empty_like(state.rho, dtype=np.float64)
+    work_sn2    = np.empty_like(state.rho, dtype=np.float64)
+    work_snout  = np.empty_like(state.m, dtype=np.float64)
+    work_n1     = np.empty(N,      dtype=np.float64)
+    work_n2     = np.empty(N,      dtype=np.float64)
+    work_n3     = np.empty(N,      dtype=np.float64)
+    work_n4     = np.empty(N,      dtype=np.float64)
+    work_nin1   = np.empty(Nm1,    dtype=np.float64)
+    work_nin2   = np.empty(Nm1,    dtype=np.float64)
+    work_nin3   = np.empty(Nm1,    dtype=np.float64)
+    work_nin4   = np.empty(Nm1,    dtype=np.float64)
+    work_nin5   = np.empty(Nm1,    dtype=np.float64)
 
     # Output options
     t_evol = bool(io.t_evol); profiles = bool(io.profiles)
@@ -79,7 +90,10 @@ def run_until_stop(state, start_step, **kwargs):
         integrate_time_step(state, dt_prop, step_count,
                             conduct_imex, # evap, binaries,         # Switches
                             eps_du, c1, c2, mrat, lnL, bkg_param,   # Parameters
-                            p,                                      # Preallocated array
+                            work_sn1, work_sn2,                     # Preallocated arrays
+                            work_snout,
+                            work_n1, work_n2, work_n3, work_n4,
+                            work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
                             )
 
         if step_count % nupdate == 0:
@@ -152,11 +166,14 @@ def run_until_stop(state, start_step, **kwargs):
         if chatter:
             print("Simulation halted: max time exceeded")
 
-def integrate_time_step(state, dt_prop, step_count,     # State
-                        conduct_imex, # evap, binaries,   # Switches
+def integrate_time_step(state, dt_prop, step_count,                 # State
+                        conduct_imex, # evap, binaries,               # Switches
                         eps_du,
-                        c1, c2, mrat, lnL, bkg_param,   # Parameters
-                        p,                              # Preallocation    
+                        c1, c2, mrat, lnL, bkg_param,               # Parameters
+                        work_sn1, work_sn2,                         # Preallocated arrays
+                        work_snout,
+                        work_n1, work_n2, work_n3, work_n4,
+                        work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,  
                         ):
     """
     Advance state by one time step.
@@ -178,12 +195,19 @@ def integrate_time_step(state, dt_prop, step_count,     # State
         Model parameters.
     bkg_param : dict
         Background potential parameters.
-    p : ndarray (N,)
-        Memory allocation for working array.
+    a_alloc, b_alloc, c_alloc, y_alloc, x_alloc : ndarray (N-1,)
+        Memory allocation for working arrays
+    work_sn1, work_sn2 : ndarray (s,N)
+        Memory allocation for working arrays
+    work_snout : ndarray (s,N+1)
+        Memory allocation for working arrays
+    work_n1, work_n2, work_n3, work_n4 : ndarray (N,)
+        Memory allocation for working arrays
+    work_nin1, work_nin2, work_nin3, work_nin4, work_nin5 : ndarray (N-1,)
+        Memory allocation for working arrays
     """
-    # Allocations
+    # Pointers for easy access
     r           = np.asarray(state.r,       dtype=np.float64)
-    # rmid_orig   = np.asarray(state.rmid,    dtype=np.float64)
     m           = np.asarray(state.m,       dtype=np.float64)
     v2          = np.asarray(state.v2,      dtype=np.float64)
     rho         = np.asarray(state.rho,     dtype=np.float64)
@@ -192,15 +216,12 @@ def integrate_time_step(state, dt_prop, step_count,     # State
 
     # IMEX METHOD
     if conduct_imex:
-        # choose order: 0 = hex -> cond; 1 = cond -> hex; 2 = strang
-        order = 2
-        dv2_hex_work = np.empty_like(v2)
-        du_cond_work = np.empty_like(v2)
-        du_max, dt_prop = conduction_imex(
+        order = STRANG_SPLIT
+        du_max, dt_prop = conduct_imex_dulim(
             v2, rho, r, m,
             c1, c2, mrat, lnL,
-            dv2_hex_work, du_cond_work,
-            dt_prop, eps_du, order,
+            work_sn1, work_sn2, work_n1, work_n2, work_n3, work_n4,
+            dt_prop, eps_du, order, max_iter_du,
         )
 
     # EXPLICIT METHOD
@@ -222,8 +243,12 @@ def integrate_time_step(state, dt_prop, step_count,     # State
     #     v2_cond, p, eps_max = binaries_heating(rmid_orig, rho, v2_cond, dt_prop)
 
     ### Step 2: Reestablish hydrostatic equilibrium ###
-    np.multiply(rho, v2, out=p) # p = rho * v2
-    status = revirialize_interp_jacobi(r, rho, p, m, bkg_param) # Modifies r, rho, p in place
+    np.multiply(rho, v2, out=work_sn1) # work_sn1 used for p
+    status = revirialize_interp_jacobi(
+        r, rho, work_sn1, m, bkg_param,
+        work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
+        work_n1, work_sn2, work_snout,
+        ) # Modifies r, rho, p in place
 
     # Shell crossing
     if status == STATUS_SHELL_CROSSING:
@@ -233,7 +258,7 @@ def integrate_time_step(state, dt_prop, step_count,     # State
 
     # r and rho were modified in place already; no need to assign them
     # Still need to update v2 based on the new p and rho
-    np.divide(p, rho, out=state.v2)
+    np.divide(work_sn1, rho, out=state.v2)
     # if evap:
     #     state.m = m
 

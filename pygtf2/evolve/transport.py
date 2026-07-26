@@ -5,6 +5,9 @@ from pygtf2.util.interpolate import interp_linear_to_interfaces
 from pygtf2.util.calc import solve_tridiagonal_thomas
 
 _TINY64 = np.finfo(np.float64).tiny
+HEX_FIRST       = 0
+COND_FIRST      = 1
+STRANG_SPLIT    = 2
 
 ### EXPLICIT METHOD
 
@@ -433,6 +436,101 @@ def hex_limit_dt(v2, dv2_work, dt, eps_du):
 
     return du_max, dt_eff
 
+@njit(void(float64[:, :], float64[:, :],float64[:, :], float64[:], float64[:, :],float64[:, :], float64, float64), cache=True, fastmath = True)
+def hex_explicit(v2, rho, lnL, mrat, r, v2_hex_src_work, dt, c1):
+    """
+    Apply one explicit forward-Euler inter-species heat-exchange step
+    directly to v2.
+
+    Parameters
+    ----------
+    v2 : ndarray, shape (s, N)
+        Velocity dispersion squared. Updated in place.
+    rho : ndarray, shape (s, N)
+        Density per cell for each species.
+    lnL : ndarray, shape (s, s)
+        Inter-species coupling coefficients.
+    mrat : ndarray, shape (s,)
+        Mass-ratio-like coefficient for each species.
+    r : ndarray, shape (s, N+1)
+        Radial cell interfaces for each species.
+    v2_hex_src_work : ndarray, shape (s, N)
+        Workspace used to hold the unchanged input state for this
+        explicit substep. It must not alias v2.
+    dt : float
+        Explicit heat-exchange timestep.
+    c1 : float
+        Multiplicative constant for inter-species exchange term.
+    """
+    s, N = v2.shape
+
+    # Zero workspace
+    for n in range(s):
+        for i in range(N):
+            v2_hex_src_work[n, i] = v2[n, i]
+
+    # Original exchange term was written in u.
+    # Converting to v2 = (2/3)u gives:
+    # prefac = c1 * ((2/3) / sqrt(1.5))
+    prefac_dt = c1 * ((2.0 / 3.0) / np.sqrt(1.5)) * dt
+
+    for n in range(s):
+        mrn = mrat[n]
+
+        for k in range(s):
+            if k == n:
+                continue
+
+            pair_prefac = prefac_dt * lnL[n, k]
+            mrk = mrat[k]
+
+            i = 0
+            j = 0
+
+            while i < N and j < N:
+                rn_lo = r[n, i]
+                rn_hi = r[n, i + 1]
+                rk_lo = r[k, j]
+                rk_hi = r[k, j + 1]
+
+                if rk_hi <= rn_lo:
+                    j += 1
+                    continue
+                if rn_hi <= rk_lo:
+                    i += 1
+                    continue
+
+                rrmin = rn_lo if rn_lo >= rk_lo else rk_lo
+                rrmax = rn_hi if rn_hi <= rk_hi else rk_hi
+
+                rn_lo3 = rn_lo * rn_lo * rn_lo
+                rn_hi3 = rn_hi * rn_hi * rn_hi
+                vol_n_r3 = rn_hi3 - rn_lo3
+
+                if vol_n_r3 > 0.0:
+                    rrmin3 = rrmin * rrmin * rrmin
+                    rrmax3 = rrmax * rrmax * rrmax
+                    dvol_overlap_r3 = rrmax3 - rrmin3
+
+                    if dvol_overlap_r3 > 0.0:
+                        vol_ratio = dvol_overlap_r3 / vol_n_r3
+
+                        # Always read both species from the unchanged original state.
+                        v2n = v2_hex_src_work[n, i]
+                        v2k = v2_hex_src_work[k, j]
+                        denom = v2k + v2n
+
+                        if denom > 0.0:
+                            root = np.sqrt(denom)
+                            inv_p32 = 1.0 / (denom * root)
+
+                            v2[n, i] += pair_prefac * rho[k, j] * vol_ratio * (mrk * v2k - mrn * v2n) * inv_p32
+
+                if rn_hi <= rk_hi:
+                    i += 1
+                else:
+                    j += 1
+
 @njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64, float64), cache=True, fastmath=True)
 def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     """
@@ -629,8 +727,10 @@ def build_tridiag_system_VEC(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     c[-1] = 0.0
     d[-1] = delu[-1] / np.sqrt(su[-1])
 
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64[:], float64[:, :], float64[:, :], float64), cache=True, fastmath=True)
-def conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_trial, dt,):
+@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:], float64[:], float64[:], float64, float64[:], float64[:, :], float64[:, :], float64), cache=True, fastmath=True)
+def conduct_implicit(v2, rho, r, m, 
+                     a, b, c, d, 
+                     c2, mrat, lnL, du_trial, dt,):
     """
     Implicit intra-species conduction step on v2.
     Use a fixed dt - no timestep limiting in this step - we find that the hex step limits in almost all cases.
@@ -644,11 +744,6 @@ def conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_trial, dt,):
     v2 is updated in-place. u = 1.5 * v2
     """
     s, N = v2.shape
-
-    a = np.empty(N, dtype=np.float64)
-    b = np.empty(N, dtype=np.float64)
-    c = np.empty(N, dtype=np.float64)
-    d = np.empty(N, dtype=np.float64)
 
     for k in range(s):
         rk       = r[k]
@@ -689,7 +784,7 @@ def cond_du_max(v2, du_cond):
     return du_max
 
 @njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64, float64[:], float64[:, :], float64[:, :], float64[:, :], float64, float64, types.int64), cache=True, fastmath=True)
-def conduction_imex(
+def conduct_imex(
     v2, rho, r, m, c1, c2, mrat, lnL,
     dv2_hex_work, du_cond_work, dt, eps_du, order,
     ) -> tuple[np.float64, np.float64]:
@@ -721,6 +816,14 @@ def conduction_imex(
     du_cond_max = 0.0
     dt_eff = dt
 
+    # Preallocate arrays for tridiagonal solve
+    _, N = v2.shape
+
+    a = np.empty(N, dtype=np.float64)
+    b = np.empty(N, dtype=np.float64)
+    c = np.empty(N, dtype=np.float64)
+    d = np.empty(N, dtype=np.float64)
+
     # ------------------------------------------------------------
     # order == 0 : hex first, then conduction
     # ------------------------------------------------------------
@@ -738,7 +841,7 @@ def conduction_imex(
         apply_scaled_dv2(v2, dv2_hex_work, scale)
         du_hex_max = du_hex_trial * scale
 
-        conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_cond_work, dt_eff)
+        conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
         du_cond_max = cond_du_max(v2, du_cond_work)
 
     # ------------------------------------------------------------
@@ -752,7 +855,7 @@ def conduction_imex(
         if du_hex_trial > eps_du:
             dt_eff = dt * (0.95 * eps_du / du_hex_trial)
 
-        conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_cond_work, dt_eff)
+        conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
         du_cond_max = cond_du_max(v2, du_cond_work)
 
         scale = 1.0
@@ -787,7 +890,7 @@ def conduction_imex(
         du_hex1_max = du_hex1_trial * scale1
 
         # Full conduction step with the shared full dt_eff
-        conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_cond_work, dt_eff)
+        conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
         du_cond_max = cond_du_max(v2, du_cond_work)
 
         # Recompute second half-step hex on the updated state,
@@ -806,3 +909,136 @@ def conduction_imex(
         du_max = du_cond_max
 
     return float(du_max), float(dt_eff)
+
+@njit(
+    types.Tuple((float64, float64, types.int64))(
+        float64[:, :],  # v2
+        float64[:, :],  # rho
+        float64[:, :],  # r
+        float64[:, :],  # m
+        float64,         # c1
+        float64,         # c2
+        float64[:],      # mrat
+        float64[:, :],  # lnL
+        float64[:, :],  # v2_work
+        float64[:, :],  # v2_old_work
+        float64[:],      # a_work
+        float64[:],      # b_work
+        float64[:],      # c_work
+        float64[:],      # d_work
+        float64,         # dt
+        float64,         # eps_du
+        types.int64,     # order
+        types.int64,     # max_iter
+    ),
+    cache=True, fastmath=True,
+)
+def conduct_imex_dulim(
+    v2, rho, r, m,
+    c1, c2, mrat, lnL,
+    v2_work, v2_old_work, a_work, b_work, c_work, d_work,
+    dt, eps_du, order, max_iter,
+):
+    """
+    Apply one split conduction step with a timestep limited by the net
+    fractional change across the complete IMEX step.
+
+    order:
+        HEX_FIRST -> hex(dt)      then cond(dt)
+        COND_FIRST -> cond(dt)     then hex(dt)
+        STRANG_SPLIT -> Strang:
+             hex(dt/2) -> cond(dt) -> hex(dt/2)
+    The trial is accepted when
+
+        max_{species, shell}
+            |v2_final - v2_initial|
+            / max(v2_initial, tiny)
+
+        <= eps_du
+
+    Returns
+    -------
+    du_max : float
+        Maximum net fractional change over the accepted full split step.
+    dt_used : float
+        Accepted trial timestep. On failure, this is the next reduced
+        timestep estimate.
+    du_iter : int
+        Zero-based iteration on which the step was accepted, or -1 if
+        no timestep was accepted after max_iter attempts.
+    """
+    s, N = v2.shape
+
+    tiny = _TINY64
+    safety = 0.95
+
+    # Save the original state once. Every trial starts from this state.
+    for k in range(s):
+        for i in range(N):
+            v2_old_work[k, i] = v2[k, i]
+
+    dt_trial = dt
+    du_max = 0.0
+
+    for j in range(max_iter):
+        # The first trial already starts from the original state.
+        # Subsequent trials must undo the rejected trial completely.
+        if j > 0:
+            for k in range(s):
+                for i in range(N):
+                    v2[k, i] = v2_old_work[k, i]
+
+        if order == HEX_FIRST:
+            hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt_trial, c1,)
+            conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt_trial)
+
+        elif order == COND_FIRST:
+            conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt_trial)
+            hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt_trial, c1,)
+
+        elif order == STRANG_SPLIT:
+            half_dt_trial = 0.5 * dt_trial
+
+            # First half-step hex on initial state determines dt_eff
+            hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt_trial, c1,)
+
+            conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt_trial,)
+
+            # Recompute the second half-step on the updated state.
+            hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt_trial, c1,)
+
+        else:
+            raise ValueError("unrecognized order code in conduction step")
+
+        # ------------------------------------------------------------
+        # Measure the net change across the complete split step.
+        # The denominator is always the original pre-step value.
+        # ------------------------------------------------------------
+        du_max = 0.0
+
+        for k in range(s):
+            for i in range(N):
+                v2_old = v2_old_work[k, i]
+
+                denom = v2_old
+                if denom <= tiny:
+                    denom = tiny
+
+                du = abs(v2[k, i] - v2_old) / denom
+
+                if du > du_max:
+                    du_max = du
+
+        # Accept the complete step.
+        if du_max <= eps_du:
+            return du_max, dt_trial, j
+
+        # Estimate a smaller timestep and rerun the complete step.
+        dt_trial *= safety * eps_du / du_max
+
+    # No trial was accepted. Do not leave the last rejected state in v2.
+    for k in range(s):
+        for i in range(N):
+            v2[k, i] = v2_old_work[k, i]
+
+    return du_max, dt_trial, -1
