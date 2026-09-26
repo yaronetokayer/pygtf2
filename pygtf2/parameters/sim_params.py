@@ -6,7 +6,7 @@ class SimParams:
     ----------
     t_halt : float
         Simulation halt time. Must be positive.
-    rho_c_halt : float
+    rho0_halt : float
         Central density at which to halt the simulation. Must be positive.
     lnL_param : float
         Coulomb logarithm calibration parameter. Must be positive.
@@ -20,6 +20,8 @@ class SimParams:
         Include evaporation in simulation
     binaries : bool
         Include binary heating in simulation
+    n_particle: int
+        Absolute particle number for binary heat generation
     conduct_imex : bool
         Use IMEX conduction scheme instead of explicit scheme
     bkg : dict
@@ -30,36 +32,39 @@ class SimParams:
     def __init__(
             self, 
             t_halt : float = 1000.0,
-            rho_c_halt : float = 1.0e8,
+            rho0_halt : float = 1.0e8,
             lnL_param : float = 0.11,
             alpha : float = 1.217,
             beta : float = 1.0,
-            b : float = 0.45,
+            b : float = 0.44,
             evap : bool = False,
             binaries : bool = False,
+            n_particle : int = 1e4,
             conduct_imex : bool = True,
             bkg: dict | None = None,
     ):
         
         self._t_halt = None
-        self._rho_c_halt = None
+        self._rho0_halt = None
         self._lnL_param = None
         self._alpha = None
         self._beta = None
         self._b = None
         self._evap = None
         self._binaries = None
+        self._n_particle = None
         self._conduct_imex = None
         self._bkg = dict(self.DEFAULT_BKG)
 
         self.t_halt = t_halt
-        self.rho_c_halt = rho_c_halt
+        self.rho0_halt = rho0_halt
         self.lnL_param = lnL_param
         self.alpha = alpha
         self.beta = beta
         self.b = b
         self.evap = evap
         self.binaries = binaries
+        self._n_particle = int(n_particle)
         self._conduct_imex = conduct_imex
         if bkg is not None:
             self.bkg = bkg
@@ -75,14 +80,14 @@ class SimParams:
         self._t_halt = float(value)
 
     @property
-    def rho_c_halt(self):
-        return self._rho_c_halt
+    def rho0_halt(self):
+        return self._rho0_halt
 
-    @rho_c_halt.setter
-    def rho_c_halt(self, value):
+    @rho0_halt.setter
+    def rho0_halt(self, value):
         if value <= 0:
-            raise ValueError("rho_c_halt must be positive")
-        self._rho_c_halt = float(value)
+            raise ValueError("rho0_halt must be positive")
+        self._rho0_halt = float(value)
 
     @property
     def lnL_param(self):
@@ -143,6 +148,16 @@ class SimParams:
         if not isinstance(value, (bool, int)) or (isinstance(value, int) and value not in (0, 1)):
             raise ValueError("binaries must be a bool (True/False) or int (0/1)")
         self._binaries = bool(value)
+
+    @property
+    def n_particle(self):
+        return self._n_particle
+
+    @n_particle.setter
+    def n_particle(self, value):
+        if value <= 0:
+            raise ValueError("n_particle must be positive")
+        self._n_particle = int(value)
 
     @property
     def conduct_imex(self):

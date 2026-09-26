@@ -383,12 +383,12 @@ class State:
         numpy.ndarray
             - If a background potential is specified: a 1D numpy array (dtype float64)
               of length 4 with the following entry meanings:
-            [0] : integer code identifying the background potential (0 = no background;
-                  positive values map to specific analytic profiles).
+            [0] : integer code identifying the background potential
+                (-1 = no background; nonnegative values map to analytic profiles).
             [1] : mass-like parameter for the profile (e.g. total mass, M_s).
             [2] : length-scale parameter for the profile (e.g. scale radius a or r_s).
             [3] : additional profile-dependent parameter (e.g. truncation radius,
-                  concentration, or shape parameter). Set to NaN if unused.
+                  concentration, or shape parameter). Set to 0.0 if unused.
 
         Notes
         -----
@@ -558,18 +558,18 @@ class State:
         for i, name in enumerate(labels):
             if spec[name].init.prof == 'nfw':
                 r1 = r[i, 1]
-                rho_c_ideal = 1.0 / (r1 * (1.0 + r1)**2)
-                rho[i, 0] = 2.0 * rho_c_ideal - rho[i, 1]
+                rho0_ideal = 1.0 / (r1 * (1.0 + r1)**2)
+                rho[i, 0] = 2.0 * rho0_ideal - rho[i, 1]
                 dr_ratio = (r[i, 2] - r[i, 0]) / (r[i, 3] - r[i, 1])
                 p[i, 0] = p[i, 1] - dr_ratio * (p[i, 2] - p[i, 1])
                 v2[i, 0] = p[i, 0] / rho[i, 0]
 
         # Recompute pressure of central bin such that HE is guaranteed
-        srho_c = rho[:, 1] + rho[:, 0]
+        srho0 = rho[:, 1] + rho[:, 0]
         r_c = r[:, 1]
         dr_c = r[:, 2] - r[:, 0]
         m_enc_c = np.sum(m[:, 1])
-        p[:, 0] = p[:, 1] + srho_c * dr_c * m_enc_c / (4.0 * r_c**2)
+        p[:, 0] = p[:, 1] + srho0 * dr_c * m_enc_c / (4.0 * r_c**2)
         v2[:, 0] = p[:, 0] / rho[:, 0]
 
         self.m          = m
@@ -583,7 +583,7 @@ class State:
         First update pressure with a backward sweep, then
         iteratively runs revirialize() until max |dr/r| < eps_dr.
         """
-        from pygtf2.evolve.hydrostatic import revirialize_interp_gs_diagnostics, revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING, compute_he_resid_norm, compute_he_pressures
+        from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING
         chatter = self.config.io.chatter
         bkg_param = self.bkg_param
 
@@ -596,7 +596,7 @@ class State:
         m = self.m.astype(np.float64, copy=False)
 
         # --- Update pressure with backward sweep ---
-        res_old, res_new = compute_he_pressures_with_resid(self.r, self.rho, p_new, m, bkg_param)
+        res_old, res_new = compute_he_pressures_with_resid(r_new, rho_new, p_new, m, bkg_param)
         if chatter:
             print(f"\tInitial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
 
@@ -660,7 +660,8 @@ class State:
         """
         Resets initial state
         """
-        from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread, mass_fraction_radii
+        from pygtf2.util.calc import calc_r50_spread, mass_fraction_radii
+        from pygtf2.util.interpolate import sum_intensive_loglog_single
 
         config = self.config
 
@@ -682,8 +683,8 @@ class State:
         for k in range(s):
             self.r50evo[k,0] = mass_fraction_radii(self.r[k], self.m[k], frac)[0]
 
-        self.rho_c, self.v2_c, self.r_c = calc_rho_v2_r_c(self.rmid, self.rho, self.v2)
-        self.r50_spread                 = calc_r50_spread(self.r, self.m, self.r50evo)
+        self.rho0       = sum_intensive_loglog_single(np.min(self.rmid[:,0]), self.rmid, self.rho)
+        self.r50_spread = calc_r50_spread(self.r, self.m, self.r50evo)
 
         # For diagnostics
         self.n_iter_du = 0
@@ -694,7 +695,7 @@ class State:
         if config.io.chatter:
             print("State initialized.")
 
-    def run(self, steps=None, stoptime=None, rho_c=None):
+    def run(self, steps=None, stoptime=None, rho0=None):
         """
         Run the simulation until a halting criterion is met.
         User can set halting criteria to run for a specified duration.
@@ -706,7 +707,7 @@ class State:
             Number of steps to advance the simulation
         stoptime : float, optional
             Amount of simulation time by which to advance the simulation
-        rho_c: float, optional
+        rho0: float, optional
             Max central denisty value to advance until
         """
         from pygtf2.evolve.integrator import run_until_stop
@@ -722,8 +723,8 @@ class State:
             kwargs['steps'] = steps
         if stoptime is not None:
             kwargs['stoptime'] = stoptime
-        if rho_c is not None:
-            kwargs['rho_c'] = rho_c
+        if rho0 is not None:
+            kwargs['rho0'] = rho0
 
         # Write initial state to disk 
         write_profile_snapshot(self) 
@@ -750,8 +751,8 @@ class State:
         ---------
         quantity : str, optional
             Key from the time_evolution.txt file to plot on the y-axis.
-            Default is 'rho_c'.
-            Options are 'rho_c', 'v2_c', 'r_c', 'mintrel', 'r_enc'.
+            Default is 'rho0'.
+            Options are 'rho0', 'v2_c', 'r_c', 'mintrel', 'r_enc'.
         ylabel : str, optional
             Custom y-axis label. Defaults to quantity.
         logy : bool, optional

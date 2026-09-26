@@ -64,19 +64,14 @@ def extract_time_evolution_data(filepath):
     result["species"] = {}
 
     for col in header:
-        if col.startswith("rho_c["):
-            label = col.split("[", 1)[1].rstrip("]")
+        if "[" in col and col.endswith("]"):
+            quantity, label = col.split("[", 1)
+            label = label.rstrip("]")
 
-            result["species"][label] = {
-                "rho_c" : result[f"rho_c[{label}]"],
-                "r01"   : result[f"r01[{label}]"],
-                "r05"   : result[f"r05[{label}]"],
-                "r10"   : result[f"r10[{label}]"],
-                "r20"   : result[f"r20[{label}]"],
-                "r50"   : result[f"r50[{label}]"],
-                "r90"   : result[f"r90[{label}]"],
-                "r50evo": result[f"r50evo[{label}]"],
-            }
+            if label not in result["species"]:
+                result["species"][label] = {}
+
+            result["species"][label][quantity] = result[col]
 
     # Preserve original dtype behavior for step
     if "step" in result:

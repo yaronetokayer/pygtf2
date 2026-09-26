@@ -1,5 +1,11 @@
 import numpy as np
-from numba import njit, float64
+from numba import njit, float64, void
+
+
+@njit(float64(float64, float64, float64), fastmath=True, cache=True,)
+def hernq_static_scalar(r, m_tot, r_s):
+    denom = r + r_s
+    return m_tot * r * r / (denom * denom)
 
 @njit(float64[:](float64[:], float64, float64), fastmath=True, cache=True)
 def hernq_static(r, m_tot, r_s):
@@ -16,4 +22,9 @@ def hernq_static(r, m_tot, r_s):
     -------
     ndarray
     """
-    return m_tot * r**2 / (r + r_s)**2
+    out = np.empty_like(r)
+
+    for i in range(r.shape[0]):
+        out[i] = hernq_static_scalar(r[i], m_tot, r_s)
+
+    return out

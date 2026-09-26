@@ -783,132 +783,208 @@ def cond_du_max(v2, du_cond):
 
     return du_max
 
-@njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64, float64[:], float64[:, :], float64[:, :], float64[:, :], float64, float64, types.int64), cache=True, fastmath=True)
-def conduct_imex(
-    v2, rho, r, m, c1, c2, mrat, lnL,
-    dv2_hex_work, du_cond_work, dt, eps_du, order,
-    ) -> tuple[np.float64, np.float64]:
+# @njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64, float64[:], float64[:, :], float64[:, :], float64[:, :], float64, float64, types.int64), cache=True, fastmath=True)
+# def conduct_imex(
+#     v2, rho, r, m, c1, c2, mrat, lnL,
+#     dv2_hex_work, du_cond_work, dt, eps_du, order,
+#     ) -> tuple[np.float64, np.float64]:
+#     """
+#     Apply one split conduction step with a shared timestep determined by
+#     the heat-exchange (hex) operator.
+
+#     order:
+#         0 -> hex(dt)      then cond(dt)
+#         1 -> cond(dt)     then hex(dt)
+#              but dt is still chosen from hex on the initial state
+#         2 -> Strang:
+#              hex(dt/2) -> cond(dt) -> hex(dt/2)
+#              where dt is chosen from the initial half-step hex limiter
+
+#     Returns
+#     -------
+#     du_max : float
+#         Maximum realized fractional change from either operator.
+#         For hex this is max |dv2|/|v2|, and for conduction it is
+#         max |du|/|u|. These are equivalent fractional diagnostics.
+#     dt_eff : float
+#         Effective shared timestep accepted for this split step.
+#         For Strang this is the full-step dt_eff, so each hex half-step
+#         uses 0.5 * dt_eff.
+#     """
+
+#     du_hex_max = 0.0
+#     du_cond_max = 0.0
+#     dt_eff = dt
+
+#     # Preallocate arrays for tridiagonal solve
+#     _, N = v2.shape
+
+#     a = np.empty(N, dtype=np.float64)
+#     b = np.empty(N, dtype=np.float64)
+#     c = np.empty(N, dtype=np.float64)
+#     d = np.empty(N, dtype=np.float64)
+
+#     # ------------------------------------------------------------
+#     # order == 0 : hex first, then conduction
+#     # ------------------------------------------------------------
+#     if order == 0:
+#         compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_hex_work, dt, c1)
+#         du_hex_trial = hex_du_max(v2, dv2_hex_work)
+
+#         if du_hex_trial > eps_du:
+#             dt_eff = dt * (0.95 * eps_du / du_hex_trial)
+
+#         scale = 1.0
+#         if dt > 0.0:
+#             scale = dt_eff / dt
+
+#         apply_scaled_dv2(v2, dv2_hex_work, scale)
+#         du_hex_max = du_hex_trial * scale
+
+#         conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
+#         du_cond_max = cond_du_max(v2, du_cond_work)
+
+#     # ------------------------------------------------------------
+#     # order == 1 : conduction first, then hex
+#     # dt still chosen from hex on the initial state
+#     # ------------------------------------------------------------
+#     elif order == 1:
+#         compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_hex_work, dt, c1)
+#         du_hex_trial = hex_du_max(v2, dv2_hex_work)
+
+#         if du_hex_trial > eps_du:
+#             dt_eff = dt * (0.95 * eps_du / du_hex_trial)
+
+#         conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
+#         du_cond_max = cond_du_max(v2, du_cond_work)
+
+#         scale = 1.0
+#         if dt > 0.0:
+#             scale = dt_eff / dt
+
+#         apply_scaled_dv2(v2, dv2_hex_work, scale)
+#         du_hex_max = du_hex_trial * scale
+
+#     # ------------------------------------------------------------
+#     # order == 2 : Strang splitting
+#     # dt chosen from initial half-step hex limiter
+#     # ------------------------------------------------------------
+#     else:
+#         half_dt = 0.5 * dt
+
+#         # First half-step hex on initial state determines dt_eff
+#         compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_hex_work, half_dt, c1)
+#         du_hex1_trial = hex_du_max(v2, dv2_hex_work)
+
+#         half_dt_eff = half_dt
+#         if du_hex1_trial > eps_du:
+#             half_dt_eff = half_dt * (0.95 * eps_du / du_hex1_trial)
+
+#         dt_eff = 2.0 * half_dt_eff
+
+#         scale1 = 1.0
+#         if half_dt > 0.0:
+#             scale1 = half_dt_eff / half_dt
+
+#         apply_scaled_dv2(v2, dv2_hex_work, scale1)
+#         du_hex1_max = du_hex1_trial * scale1
+
+#         # Full conduction step with the shared full dt_eff
+#         conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
+#         du_cond_max = cond_du_max(v2, du_cond_work)
+
+#         # Recompute second half-step hex on the updated state,
+#         # but do not re-limit dt; just apply the accepted half-step.
+#         compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_hex_work, half_dt_eff, c1)
+#         du_hex2_max = hex_du_max(v2, dv2_hex_work)
+
+#         apply_scaled_dv2(v2, dv2_hex_work, 1.0)
+
+#         du_hex_max = du_hex1_max
+#         if du_hex2_max > du_hex_max:
+#             du_hex_max = du_hex2_max
+
+#     du_max = du_hex_max
+#     if du_cond_max > du_max:
+#         du_max = du_cond_max
+
+#     return float(du_max), float(dt_eff)
+
+@njit(
+    void(
+        float64[:, :],  # v2
+        float64[:, :],  # rho
+        float64[:, :],  # r
+        float64[:, :],  # m
+        float64,         # c1
+        float64,         # c2
+        float64[:],      # mrat
+        float64[:, :],  # lnL
+        float64[:, :],  # v2_work
+        float64[:],      # a_work
+        float64[:],      # b_work
+        float64[:],      # c_work
+        float64[:],      # d_work
+        float64,         # dt
+        types.int64,     # order
+    ),
+    cache=True, fastmath=True,
+)
+def conduct_imex_once(
+    v2, rho, r, m,
+    c1, c2, mrat, lnL,
+    v2_work, a_work, b_work, c_work, d_work,
+    dt, order,
+):
     """
-    Apply one split conduction step with a shared timestep determined by
-    the heat-exchange (hex) operator.
+    Apply one split conduction step with a timestep limited by the net
+    fractional change across the complete IMEX step.
 
     order:
-        0 -> hex(dt)      then cond(dt)
-        1 -> cond(dt)     then hex(dt)
-             but dt is still chosen from hex on the initial state
-        2 -> Strang:
+        HEX_FIRST -> hex(dt)      then cond(dt)
+        COND_FIRST -> cond(dt)     then hex(dt)
+        STRANG_SPLIT -> Strang:
              hex(dt/2) -> cond(dt) -> hex(dt/2)
-             where dt is chosen from the initial half-step hex limiter
+    The trial is accepted when
+
+        max_{species, shell}
+            |v2_final - v2_initial|
+            / max(v2_initial, tiny)
+
+        <= eps_du
 
     Returns
     -------
     du_max : float
-        Maximum realized fractional change from either operator.
-        For hex this is max |dv2|/|v2|, and for conduction it is
-        max |du|/|u|. These are equivalent fractional diagnostics.
-    dt_eff : float
-        Effective shared timestep accepted for this split step.
-        For Strang this is the full-step dt_eff, so each hex half-step
-        uses 0.5 * dt_eff.
+        Maximum net fractional change over the accepted full split step.
+    dt_used : float
+        Accepted trial timestep. On failure, this is the next reduced
+        timestep estimate.
+    du_iter : int
+        Zero-based iteration on which the step was accepted, or -1 if
+        no timestep was accepted after max_iter attempts.
     """
+    if order == HEX_FIRST:
+        hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
+        conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
 
-    du_hex_max = 0.0
-    du_cond_max = 0.0
-    dt_eff = dt
+    elif order == COND_FIRST:
+        conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
+        hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
 
-    # Preallocate arrays for tridiagonal solve
-    _, N = v2.shape
-
-    a = np.empty(N, dtype=np.float64)
-    b = np.empty(N, dtype=np.float64)
-    c = np.empty(N, dtype=np.float64)
-    d = np.empty(N, dtype=np.float64)
-
-    # ------------------------------------------------------------
-    # order == 0 : hex first, then conduction
-    # ------------------------------------------------------------
-    if order == 0:
-        compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_hex_work, dt, c1)
-        du_hex_trial = hex_du_max(v2, dv2_hex_work)
-
-        if du_hex_trial > eps_du:
-            dt_eff = dt * (0.95 * eps_du / du_hex_trial)
-
-        scale = 1.0
-        if dt > 0.0:
-            scale = dt_eff / dt
-
-        apply_scaled_dv2(v2, dv2_hex_work, scale)
-        du_hex_max = du_hex_trial * scale
-
-        conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
-        du_cond_max = cond_du_max(v2, du_cond_work)
-
-    # ------------------------------------------------------------
-    # order == 1 : conduction first, then hex
-    # dt still chosen from hex on the initial state
-    # ------------------------------------------------------------
-    elif order == 1:
-        compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_hex_work, dt, c1)
-        du_hex_trial = hex_du_max(v2, dv2_hex_work)
-
-        if du_hex_trial > eps_du:
-            dt_eff = dt * (0.95 * eps_du / du_hex_trial)
-
-        conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
-        du_cond_max = cond_du_max(v2, du_cond_work)
-
-        scale = 1.0
-        if dt > 0.0:
-            scale = dt_eff / dt
-
-        apply_scaled_dv2(v2, dv2_hex_work, scale)
-        du_hex_max = du_hex_trial * scale
-
-    # ------------------------------------------------------------
-    # order == 2 : Strang splitting
-    # dt chosen from initial half-step hex limiter
-    # ------------------------------------------------------------
-    else:
+    elif order == STRANG_SPLIT:
         half_dt = 0.5 * dt
 
         # First half-step hex on initial state determines dt_eff
-        compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_hex_work, half_dt, c1)
-        du_hex1_trial = hex_du_max(v2, dv2_hex_work)
+        hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
 
-        half_dt_eff = half_dt
-        if du_hex1_trial > eps_du:
-            half_dt_eff = half_dt * (0.95 * eps_du / du_hex1_trial)
+        conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt,)
 
-        dt_eff = 2.0 * half_dt_eff
+        # Recompute the second half-step on the updated state.
+        hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
 
-        scale1 = 1.0
-        if half_dt > 0.0:
-            scale1 = half_dt_eff / half_dt
-
-        apply_scaled_dv2(v2, dv2_hex_work, scale1)
-        du_hex1_max = du_hex1_trial * scale1
-
-        # Full conduction step with the shared full dt_eff
-        conduct_implicit(v2, rho, r, m, a, b, c, d, c2, mrat, lnL, du_cond_work, dt_eff)
-        du_cond_max = cond_du_max(v2, du_cond_work)
-
-        # Recompute second half-step hex on the updated state,
-        # but do not re-limit dt; just apply the accepted half-step.
-        compute_hex_dv2(v2, rho, lnL, mrat, r, dv2_hex_work, half_dt_eff, c1)
-        du_hex2_max = hex_du_max(v2, dv2_hex_work)
-
-        apply_scaled_dv2(v2, dv2_hex_work, 1.0)
-
-        du_hex_max = du_hex1_max
-        if du_hex2_max > du_hex_max:
-            du_hex_max = du_hex2_max
-
-    du_max = du_hex_max
-    if du_cond_max > du_max:
-        du_max = du_cond_max
-
-    return float(du_max), float(dt_eff)
+    else:
+        raise ValueError("unrecognized order code in conduction step")
 
 @njit(
     types.Tuple((float64, float64, types.int64))(

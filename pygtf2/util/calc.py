@@ -1,7 +1,10 @@
 import numpy as np 
 from numba import njit, types, float64, void
-from pygtf2.util.interpolate import sum_intensive_loglog_single, interp_intensive_loglog, sum_extensive_loglog_single, interp_species_loglog_single
-from pygtf2.profiles.bkg_pot import hernq_static
+from pygtf2.util.interpolate import sum_intensive_loglog_single, interp_intensive_loglog
+from pygtf2.profiles.bkg_pot import hernq_static_scalar
+
+CORE_HALF_RHO0 = 0
+CORE_SPITZER87 = 1
 
 @njit(void(float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True)
 def solve_tridiagonal_thomas(a, b, c, y, x):
@@ -203,80 +206,313 @@ def compute_eta_interp(masses, rmid, v2, rmax=0.0):
 
     return rmid_shared, eta_out
 
-@njit(float64[:](float64[:], float64[:]), fastmath=True, cache=True)
-def add_bkg_pot(r, bkg_param):
+@njit(float64(float64, float64[:]), fastmath=True, cache=True)
+def add_bkg_pot_scalar(r, bkg_param):
     """
-    Add a background potential to the enclosed-mass array.
+    Return the background enclosed mass at a single radius.
 
     Parameters
     ----------
-    r : array_like, shape (N+1,)
-        Edge radii.
-    bkg_param : sequence of length 4
-        Background parameters: (prof, m_par, r_par, x_par). Only prof==0 is implemented.
+    r : float
+        Radius at which to evaluate the enclosed background mass.
+
+    bkg_param : ndarray, shape (4,)
+        Background parameters:
+        (prof, m_par, r_par, x_par).
 
     Returns
     -------
-    m_add : ndarray, shape (N+1,)
-        The the background potential contribution to be added.
+    float
+        Background enclosed mass at r.
     """
     prof = int(bkg_param[0])
     m_par = bkg_param[1]
     r_par = bkg_param[2]
-    # x_par = bkg_param[3] For future profiles
+    # x_par = bkg_param[3]  # For future profiles
 
     if prof == 0:
-        m_add = hernq_static(r, m_par, r_par)
+        # Static Hernquist profile:
+        return hernq_static_scalar(r, m_par, r_par)
+
+    return 0.0
+
+@njit(void(float64[:], float64[:], float64[:]), fastmath=True, cache=True)
+def add_bkg_pot(r, bkg_param, m_enc):
+    """
+    Add the background enclosed-mass contribution to m_enc in place.
+
+    Parameters
+    ----------
+    r : ndarray, shape (N+1,)
+        Radii at which to evaluate the enclosed background mass.
+
+    bkg_param : ndarray, shape (4,)
+        Background parameters:
+        (prof, m_par, r_par, x_par).
+
+    m_enc : ndarray, shape (N+1,)
+        Enclosed-mass array. The background contribution is added
+        to this array in place.
+    """
+    for i in range(r.shape[0]):
+        m_enc[i] += add_bkg_pot_scalar(r[i], bkg_param)
+
+@njit(void(float64[:], float64[:], float64[:]), fastmath=True, cache=True,)
+def add_bkg_K(r, bkg_param, K_on_k):
+    """
+    Add dM_bkg/dr to K_on_k using a centered finite difference.
+
+    Parameters
+    ----------
+    r : ndarray, shape (N+1,)
+        Edge radii of the current species.
+
+    bkg_param : ndarray, shape (4,)
+        Background-potential parameters.
+
+    K_on_k : ndarray, shape (N+1,)
+        Existing dM_other/dr evaluated on the current species grid.
+        The background contribution is added in place.
+
+    Notes
+    -----
+    Only interior values K_on_k[1:-1] are used by the
+    re-virialization Jacobian.
+    """
+    fd_frac = 1.0e-5
+    Np1 = r.shape[0]
+
+    for i in range(1, Np1 - 1):
+        ri = r[i]
+
+        if ri > 0.0:
+            rp = ri * (1.0 + fd_frac)
+            rm = ri * (1.0 - fd_frac)
+
+            mp = add_bkg_pot_scalar(rp, bkg_param)
+            mm = add_bkg_pot_scalar(rm, bkg_param)
+
+            K_on_k[i] += (mp - mm) / (2.0 * fd_frac * ri)
+
+@njit(float64(float64, float64), fastmath=True, cache=True,)
+def calc_r_c_spitzer87(rho_0, v2_0):
+    """
+    Spitzer-like core radius.
+
+    In current code units:
+        r_core = sqrt(v2_0 / rho_0)
+    """
+    return np.sqrt(v2_0 / rho_0)
+
+@njit(float64(float64[:, :], float64[:, :]), fastmath=True, cache=True)
+def calc_r_c_half_rho0(rmid, rho):
+    """
+    Find the first radius where the total density falls to half of
+    its value at the innermost radial point:
+
+        rho_tot(r_core) = 0.5 * rho_0
+
+    The total density at arbitrary radius is evaluated using the same
+    log-log interpolation used elsewhere in the code.
+    """
+    s, N = rmid.shape
+
+    r_0 = np.min(rmid[:, 0])
+    rho_0 = sum_intensive_loglog_single(r_0, rmid, rho)
+    rho_target = 0.5 * rho_0
+
+    # Collect all species midpoint radii to obtain a robust set of
+    # locations at which to search for the first crossing.
+    radii = np.empty(s * N, dtype=np.float64)
+
+    k = 0
+    for j in range(s):
+        for i in range(N):
+            radii[k] = rmid[j, i]
+            k += 1
+
+    radii.sort()
+
+    # Find the first bracket containing the half-density crossing.
+    r_lo = r_0
+    rho_lo = rho_0
+
+    found = False
+    r_hi = r_lo
+
+    for k in range(radii.size):
+        r = radii[k]
+
+        if r <= r_lo:
+            continue
+
+        rho_r = sum_intensive_loglog_single(r, rmid, rho)
+
+        if rho_r <= rho_target:
+            r_hi = r
+            found = True
+            break
+
+        r_lo = r
+        rho_lo = rho_r
+
+    if not found:
+        return np.nan
+
+    # Solve within the bracket. Geometric midpoint is natural for
+    # a logarithmic radial grid.
+    for _ in range(50):
+        r_mid = np.sqrt(r_lo * r_hi)
+
+        rho_mid = sum_intensive_loglog_single(
+            r_mid, rmid, rho
+        )
+
+        if rho_mid > rho_target:
+            r_lo = r_mid
+        else:
+            r_hi = r_mid
+
+    return np.sqrt(r_lo * r_hi)
+
+@njit(float64(float64[:, :], float64[:, :], float64[:, :], types.int64,), cache=True,)
+def calc_r_c(rmid, rho, v2, core_def):
+    """
+    Compute the core radius using the requested definition.
+    """
+    if core_def == CORE_HALF_RHO0:
+
+        return calc_r_c_half_rho0(rmid, rho)
+
+    elif core_def == CORE_SPITZER87:
+        r0      = np.min(rmid[:,0])
+        rho0    = sum_intensive_loglog_single(r0, rmid, rho)
+        v20     = sum_intensive_loglog_single(r0, rmid, rho*v2) / rho0 # Mass-weighted average
+        return calc_r_c_spitzer87(rho0, v20)
 
     else:
-        m_add = np.zeros(r.shape, dtype=np.float64)
-    
-    return m_add
+        raise ValueError("Unrecognized core-radius definition")
 
-@njit(float64(float64, float64[:]), fastmath=True, cache=True)
-def add_bkg_pot_scalar(r, bkg_param):
+@njit(float64(float64, float64[:, :], float64[:, :], float64[:, :]), fastmath=True, cache=True)
+def calc_v2_c(r_c, r, m, v2):
     """
-    Calls add_bkg_pot on a scalar value
-    """
-    r_arr = np.array([r], dtype=np.float64)
-    return add_bkg_pot(r_arr, bkg_param)[0]
+    Mass-weighted 1D velocity dispersion squared inside r_c,
+    summed over all species.
 
-@njit(types.Tuple((float64, float64, float64))(float64[:, :], float64[:, :], float64[:, :]), fastmath=True, cache=True)
-def calc_rho_v2_r_c(rmid, rho, v2):
+    Parameters
+    ----------
+    r : (s, N+1)
+        Shell-interface radii.
+    m : (s, N+1)
+        Enclosed mass for each species.
+    v2 : (s, N)
+        Shell 1D velocity dispersion squared.
     """
-    Computes central values of system at smallest non-zero radial point.
-    rho, v2, and core radius.
-    Use core radius definition of Spitzer (1987)
-    r_c^2 = 3*v2_c / (4 * pi * G * rho_c)
+    s, N = v2.shape
 
-    Arguments
-    ---------
-    rmid : ndarray, shape (s, N)
-        Midpoint radii per species.
-    rho : ndarray, shape (s, N)
-        Shell densities per species.
+    mass_c = 0.0
+    mv2_c = 0.0
+
+    for j in range(s):
+        for i in range(N):
+
+            r_in = r[j, i]
+            r_out = r[j, i + 1]
+
+            if r_in >= r_c:
+                break
+
+            dm = m[j, i + 1] - m[j, i]
+
+            if r_out <= r_c:
+                # Entire shell lies inside the core
+                dm_c = dm
+
+            else:
+                # r_c cuts through this shell.
+                # Assuming uniform shell density, mass fraction scales as r^3.
+                frac = (
+                    (r_c**3 - r_in**3)
+                    / (r_out**3 - r_in**3)
+                )
+                dm_c = frac * dm
+
+            mass_c += dm_c
+            mv2_c += dm_c * v2[j, i]
+
+            if r_out > r_c:
+                break
+
+    return mv2_c / mass_c
+
+@njit(types.Tuple((float64[:], float64[:]))(float64, float64[:, :], float64[:, :], float64[:, :]), cache=True, fastmath=True,)
+def calc_core_species_quantities(r_c, r, m, v2):
+    """
+    Compute core mass and mass-weighted v2 for each species.
+
+    For a shell intersected by r_c, the enclosed fraction of the shell
+    mass is computed assuming constant density within the shell.
+
+    Parameters
+    ----------
+    r_c : float
+        Core radius.
+    r : ndarray, shape (s, N+1)
+        Shell-interface radii for each species.
+    m : ndarray, shape (s, N+1)
+        Enclosed mass for each species.
     v2 : ndarray, shape (s, N)
-        Shell velocity dispersion squared per species.
+        Shell velocity dispersion squared for each species.
 
     Returns
     -------
-    rho_c : float
-        Central density
-    v2_c : float
-        Central square of velocity dispersion
-    r_c : float
-        Core radius
+    m_c_species : ndarray, shape (s,)
+        Mass of each species enclosed within r_c.
+    v2_c_species : ndarray, shape (s,)
+        Mass-weighted velocity dispersion squared of each species
+        within r_c.
     """
-    r0 = np.min(rmid[:,0])
+    s, N = v2.shape
 
-    rho_c = sum_intensive_loglog_single(r0, rmid, rho)
+    m_c_species = np.zeros(s, dtype=np.float64)
+    v2_c_species = np.zeros(s, dtype=np.float64)
 
-    v2_c = sum_intensive_loglog_single(r0, rmid, rho*v2) / rho_c # Mass-weighted average
+    for k in range(s):
+        m_c_k = 0.0
+        mv2_c_k = 0.0
 
-    # Should be good estimate within order unity, based on exact result from a King profile
-    r_c = np.sqrt( v2_c / rho_c )  
+        for i in range(N):
+            r_in = r[k, i]
+            r_out = r[k, i + 1]
 
-    return float(rho_c), float(v2_c), float(r_c)
+            if r_in >= r_c:
+                break
+
+            dm = m[k, i + 1] - m[k, i]
+
+            # If r_c cuts through this shell, include only the
+            # corresponding fraction of its volume/mass.
+            if r_out > r_c:
+                frac = (
+                    (r_c**3 - r_in**3)
+                    / (r_out**3 - r_in**3)
+                )
+                dm *= frac
+
+            m_c_k += dm
+            mv2_c_k += dm * v2[k, i]
+
+            if r_out >= r_c:
+                break
+
+        m_c_species[k] = m_c_k
+
+        if m_c_k > 0.0:
+            v2_c_species[k] = mv2_c_k / m_c_k
+        else:
+            v2_c_species[k] = np.nan
+
+    return m_c_species, v2_c_species
 
 @njit(float64[:](float64[:], float64[:], float64[:]), fastmath=True, cache=True)
 def mass_fraction_radii(r_edges, m_edges, fracs):

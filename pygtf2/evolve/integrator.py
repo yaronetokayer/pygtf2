@@ -1,10 +1,12 @@
 import numpy as np 
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
-from pygtf2.evolve.transport import compute_luminosities, add_dv2dt_conduction, add_dv2dt_hex, apply_dv2dt, conduct_imex_dulim, HEX_FIRST, COND_FIRST, STRANG_SPLIT
-from pygtf2.evolve.hydrostatic import revirialize_interp_gs, revirialize_interp_jacobi, STATUS_SHELL_CROSSING
+from pygtf2.evolve.transport import compute_luminosities, add_dv2dt_conduction, add_dv2dt_hex, apply_dv2dt, conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT
+from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi, STATUS_SHELL_CROSSING
 from pygtf2.evolve.evaporate import evaporate
-from pygtf2.evolve.binaries import binaries_heating
-from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
+from pygtf2.evolve.binaries import binary_heating
+from pygtf2.util.interpolate import sum_intensive_loglog_single
+from pygtf2.util.calc import calc_r50_spread
+from pygtf2.util.little_helpers import max_frac_change
 from pygtf2.dev.debug import plot_r_markers
 
 def run_until_stop(state, start_step, **kwargs):
@@ -18,7 +20,7 @@ def run_until_stop(state, start_step, **kwargs):
     # --- User halting criteria ---
     steps = kwargs.get('steps', None)
     time_limit = kwargs.get('stoptime', None)
-    rho_c_limit = kwargs.get('rho_c', None)
+    rho0_limit = kwargs.get('rho0', None)
     step_i = state.step_count if steps is not None else None
     time_i = state.t if time_limit is not None else None
 
@@ -29,7 +31,7 @@ def run_until_stop(state, start_step, **kwargs):
 
     # Switches
     # evap = sim.evap
-    # binaries = sim.binaries
+    binaries = sim.binaries; n_particle = sim.n_particle
     conduct_imex = sim.conduct_imex
 
     # Parameters
@@ -57,9 +59,9 @@ def run_until_stop(state, start_step, **kwargs):
     # Output options
     t_evol = bool(io.t_evol); profiles = bool(io.profiles)
     chatter = bool(io.chatter); t_halt = float(sim.t_halt); nlog = int(io.nlog); nupdate = int(io.nupdate)
-    rho_c_halt = float(sim.rho_c_halt)
+    rho0_halt = float(sim.rho0_halt)
     if t_evol:
-        rho0_last_tevol = float(state.rho_c); drho_tevol = float(io.drho_tevol)
+        rho0_last_tevol = float(state.rho0); drho_tevol = float(io.drho_tevol)
         r50_spread_last_tevol = float(state.r50_spread)
         if np.allclose(mrat, mrat[0]):
             use_r50 = False
@@ -67,7 +69,7 @@ def run_until_stop(state, start_step, **kwargs):
             dr50_tevol = float(io.dr50_tevol)
             use_r50 = True
     if profiles:
-        rho0_last_prof = float(state.rho_c); drho_prof = float(io.drho_prof)
+        rho0_last_prof = float(state.rho0); drho_prof = float(io.drho_prof)
 
     safety = 0.99 # For timestepping
 
@@ -97,8 +99,8 @@ def run_until_stop(state, start_step, **kwargs):
 
         # Integrate time step
         integrate_time_step(state, dt_prop, step_count,
-                            conduct_imex, # evap, binaries,         # Switches
-                            eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param,   # Parameters
+                            conduct_imex, binaries, # evap,         # Switches
+                            eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param, n_particle,  # Parameters
                             work_sn1, work_sn2,                     # Preallocated arrays
                             work_snout,
                             work_n1, work_n2, work_n3, work_n4,
@@ -108,7 +110,7 @@ def run_until_stop(state, start_step, **kwargs):
         if step_count % nupdate == 0:
             print(f"Completed step {step_count}", end='\r', flush=True)
 
-        rho0 = state.rho_c
+        rho0 = state.rho0
         r50_spread = state.r50_spread
 
         ###########################
@@ -116,8 +118,8 @@ def run_until_stop(state, start_step, **kwargs):
         ###########################
 
         # Hardcoded criteria
-        if rho0 > rho_c_halt:
-            if step_count > 5e5:
+        if rho0 > rho0_halt:
+            if step_count > 1e3:
                 if chatter:
                     print("Simulation halted: central density exceeds halting value")
                 break
@@ -130,7 +132,7 @@ def run_until_stop(state, start_step, **kwargs):
         if (
             (steps is not None and step_count - step_i >= steps)
             or (time_limit is not None and state.t - time_i >= time_limit)
-            or (rho_c_limit is not None and rho0 >= rho_c_limit)
+            or (rho0_limit is not None and rho0 >= rho0_limit)
         ):
             if chatter:
                 print("Simulation halted: user stopping condition reached")
@@ -176,9 +178,9 @@ def run_until_stop(state, start_step, **kwargs):
             print("Simulation halted: max time exceeded")
 
 def integrate_time_step(state, dt_prop, step_count,                 # State
-                        conduct_imex, # evap, binaries,               # Switches
+                        conduct_imex, binaries, # evap              # Switches
                         eps_du, max_iter_du,
-                        c1, c2, mrat, lnL, bkg_param,               # Parameters
+                        c1, c2, mrat, lnL, bkg_param, n_particle,   # Parameters
                         work_sn1, work_sn2,                         # Preallocated arrays
                         work_snout,
                         work_n1, work_n2, work_n3, work_n4,
@@ -198,6 +200,8 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Step count
     conduct_imex : bool
         Whether to use IMEX method for conduction step.
+    binaries : bool
+        Activate heat generation due to binaries.
     eps_du : float
         Maximum allowed fractional change in v2 per time step.
     max_iter_du : int
@@ -206,6 +210,8 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Model parameters.
     bkg_param : dict
         Background potential parameters.
+    n_particle : int
+        Absolute particle number for heat generation due to binaries.
     a_alloc, b_alloc, c_alloc, y_alloc, x_alloc : ndarray (N-1,)
         Memory allocation for working arrays
     work_sn1, work_sn2 : ndarray (s,N)
@@ -225,36 +231,79 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
 
     ### Step 1: Energy transport ###
 
-    # IMEX METHOD
-    if conduct_imex:
+    # Save initial state
+    work_sn2[:,:] = v2
+
+    dt_trial = dt_prop
+    iter_du = -1
+
+    for j in range(max_iter_du):
+        if j > 0:  # start from initial state
+            v2[:,:] = work_sn2
+
+        # IMEX METHOD
+        if not conduct_imex:
+            raise RuntimeError(f"Step {step_count}: Explicit conduction method is deprecated.")
         order = STRANG_SPLIT
-        du_max, dt_prop, iter_du = conduct_imex_dulim(
+        conduct_imex_once(
             v2, rho, r, m,
             c1, c2, mrat, lnL,
-            work_sn1, work_sn2, work_n1, work_n2, work_n3, work_n4,
-            dt_prop, eps_du, order, max_iter_du,
+            work_sn1, work_n1, work_n2, work_n3, work_n4,
+            dt_trial, order,
         )
 
-    # EXPLICIT METHOD
-    else:
-        lum     = np.zeros_like(r,  dtype=np.float64)
-        dv2dt   = np.zeros_like(v2, dtype=np.float64)
-        compute_luminosities(c2, r, v2, rho, mrat, lnL, lum)
-        add_dv2dt_conduction(m, lum, dv2dt)
-        add_dv2dt_hex(v2, rho, lnL, mrat, r, c1, dv2dt)
-        du_max, dt_prop = apply_dv2dt(v2, dv2dt, dt_prop, eps_du)
+        # Other energy modules can be added here
+        if binaries:
+            binary_heating(rho, v2, r, dt_trial, mrat, n_particle)
+
+        du_max = max_frac_change(v2, work_sn2)
+
+        if du_max <= eps_du:
+            iter_du = j
+            break
+
+        dt_trial *= 0.95 * eps_du / du_max
 
     if iter_du == -1:
+        v2[:,:] = work_sn2
         raise RuntimeError(f"Step {step_count}: Max iterations exceeded in conduction step.")
+
+    dt_prop = dt_trial
+
+    ##################################################################################################################################
+
+    # # IMEX METHOD
+    # if conduct_imex:
+    #     order = STRANG_SPLIT
+    #     du_max, dt_prop, iter_du = conduct_imex_dulim(
+    #         v2, rho, r, m,
+    #         c1, c2, mrat, lnL,
+    #         work_sn1, work_sn2, work_n1, work_n2, work_n3, work_n4,
+    #         dt_prop, eps_du, order, max_iter_du,
+    #     )
+
+    # # EXPLICIT METHOD
+    # else:
+    #     lum     = np.zeros_like(r,  dtype=np.float64)
+    #     dv2dt   = np.zeros_like(v2, dtype=np.float64)
+    #     compute_luminosities(c2, r, v2, rho, mrat, lnL, lum)
+    #     add_dv2dt_conduction(m, lum, dv2dt)
+    #     add_dv2dt_hex(v2, rho, lnL, mrat, r, c1, dv2dt)
+    #     du_max, dt_prop = apply_dv2dt(v2, dv2dt, dt_prop, eps_du)
+
+    # if iter_du == -1:
+    #     raise RuntimeError(f"Step {step_count}: Max iterations exceeded in conduction step.")
+
+    # # Apply heating
+    # if binaries:
+    #     v2_cond, p, eps_max = binaries_heating(rmid_orig, rho, v2_cond, dt_prop, n_particle)
+
+    ##################################################################################################################################
 
     # Apply evaporation
     # if evap:
     #     evaporate(r, rmid_orig, m, v2_cond, rho, dt_prop) # Modifies rho and m in place
     #     p = v2_cond * rho
-
-    # Apply heating
-    # if binaries:
-    #     v2_cond, p, eps_max = binaries_heating(rmid_orig, rho, v2_cond, dt_prop)
 
     np.multiply(rho, v2, out=work_sn1) # work_sn1 used for p
 
@@ -280,8 +329,8 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     np.add(r[:, 1:], r[:, :-1], out=state.rmid)
     state.rmid *= 0.5
 
-    state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(state.rmid, rho, state.v2)
-    state.r50_spread                    = calc_r50_spread(r, m, state.r50evo)
+    state.rho0          = sum_intensive_loglog_single(np.min(state.rmid[:,0]), state.rmid, rho)
+    state.r50_spread    = calc_r50_spread(r, m, state.r50evo)
 
     # Diagnostics
     state.n_iter_du     += iter_du
