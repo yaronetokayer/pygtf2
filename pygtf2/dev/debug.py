@@ -2,6 +2,10 @@ import matplotlib.pyplot as plt
 
 def plot_r_markers(r_slice):
     """
+    Display per-species radial markers on logarithmic axes.
+
+    Parameters
+    ----------
     r_slice : array of shape (s, m)
         Radii for each species (s species, m points each).
     """
@@ -31,6 +35,10 @@ import numpy as np
 
 def plot_r_markers(r_slice):
     """
+    Display per-species radial markers on logarithmic axes.
+
+    Parameters
+    ----------
     r_slice : array of shape (s, m)
         Radii for each species (s species, m points each).
     """
@@ -61,7 +69,9 @@ def plot_r_markers(r_slice):
 # the eps_du criterion is checked within the conduction step.
 def compute_time_step(state) -> float:
     """
-    Compute time step to be used for integration step.
+    Legacy timestep estimate requiring eps_dt and mintrelax.
+
+    Not used by the current integrator; current PrecisionParams has no eps_dt.
 
     Arguments
     ---------
@@ -87,8 +97,9 @@ def compute_time_step(state) -> float:
     return float(min(dt1, dt2))
 
 def write_log_entry_old(state, start_step):
-    """ 
-    Append a line to the simulation log file.
+    """
+    Legacy log writer for obsolete State and PrecisionParams attributes.
+    Not compatible with the current simulation API. Appends a log line.
     Overwrites any lines with step_count >= current step_count.
 
     Arguments

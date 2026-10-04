@@ -85,7 +85,7 @@ def realign(r, rho, v2) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
       rho : (s, N)   per-species shell densities
       v2  : (s, N)   per-species shell velocity dispersion^2
     Returns:
-      r_hat      : (N+1,)
+      r_hat      : (s, N+1)
       rho_hat    : (s, N)
       v2_hat     : (s, N)
       p_hat      : (s, N)
@@ -308,7 +308,7 @@ def realign_extensive_readable(r, rho, v2):
 
     Returns
     -------
-    r_hat      : (N+1,) common edges
+    r_hat      : (s, N+1) common edges
     rho_hat    : (s, N)  per-species densities on r_hat
     u_hat      : (s, N)  per-species specific internal energy
     v2_hat     : (s, N)  per-species p/rho

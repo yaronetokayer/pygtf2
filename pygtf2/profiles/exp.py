@@ -5,9 +5,9 @@ from pygtf2.util.calc import add_bkg_pot_scalar
 def _exp_velocity_integrand(x, bkg_param):
     """
     rho(x) * M(x) / x^2
-    rho(x) = (Mtot / 8*pi*r_s^3) * e^{-r/r_s} 
-    M(r) = (Mtot / 2) * (2 - e^{-r/r_s} * ((r/r_s)^2 + 2*r/r_s + s))
-    Mtot / 4*pi*r_s^3 = rho_s is set to 1
+    rho(x) = (Mtot / (8*pi*r_s^3)) * e^{-r/r_s}
+    M(r) = (Mtot / 2) * (2 - e^{-r/r_s} * ((r/r_s)^2 + 2*r/r_s + 2))
+    Mtot / (4*pi*r_s^3) = rho_s is set to 1
     Mtot is set to 1
     r_s is set to 1
     """
@@ -18,7 +18,7 @@ def _exp_velocity_integrand(x, bkg_param):
 
 def menc_exp(r):
     """
-    M(r) = (Mtot / 2) * (2 - e^{-r/r_s} * ((r/r_s)^2 + 2*r/r_s + s))
+    M(r) = (Mtot / 2) * (2 - e^{-r/r_s} * ((r/r_s)^2 + 2*r/r_s + 2))
     Mtot and r_s are set to 1
     """
     return 0.5 * ( 2.0 - np.exp(-r) * (r**2 + 2.0 * r + 2.0) )
@@ -29,8 +29,8 @@ def sigr_exp(r, prec, bkg_param):
 
     Parameters
     ----------
-    r : float or ndarray
-        Radius in units of r_s.
+    r : one-dimensional ndarray
+        Radii in units of r_s. Supply an array even for one radius.
     prec : PrecisionParams
         The simulation PrecisionParams object
     bkg_param : np.ndarray

@@ -44,7 +44,16 @@ class InitParams:
     """
     Single container for initial profile parameters.
     Fields not applicable to the selected profile are coerced to None with a warning.
-    Mutual exclusivity: setting cvir clears r_s, and setting r_s clears cvir.
+    Construction, update(), and set_profile() validate the fields. If both
+    cvir and r_s are non-None, r_s wins and cvir is cleared with a warning.
+    Direct attribute assignments do not run these checks. To switch to
+    concentration-based scaling with update(), explicitly pass r_s=None.
+
+    Supported profiles are nfw, truncated_nfw, abg, exp, king, and etnfw.
+    r_s is in kpc; cvir is dimensionless concentration and z is redshift.
+    ABG uses alpha, beta, gamma; King uses W0; truncated NFW uses Zt and
+    its fractional potential-step parameter deltaP. Applicable defaults
+    are supplied by PROFILE_SCHEMAS. notices records coercion warnings.
     """
     # profile tag
     prof: str = None
@@ -81,7 +90,10 @@ class InitParams:
 
     @classmethod
     def from_profile(cls, profile: str, **kwargs) -> "InitParams":
-        """Factory preserving your old make_init_params behavior."""
+        """
+        Build validated profile parameters, applying defaults for omitted fields.
+
+        """
         prof = _norm_prof(profile)
         obj = cls(prof=prof, **kwargs)
         return obj
@@ -179,4 +191,10 @@ class InitParams:
 
 # ----- Backward-compatible factory
 def make_init_params(profile: str, **kwargs) -> InitParams:
+    """
+    Construct validated InitParams for a supported profile name.
+
+    Additional keywords set applicable fields; omitted values use profile
+    defaults. Equivalent to InitParams.from_profile(profile, **kwargs).
+    """
     return InitParams.from_profile(profile, **kwargs)

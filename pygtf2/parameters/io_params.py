@@ -8,25 +8,34 @@ class IOParams:
     ----------
     model_no : int
         Integer identifier for the model run (must be 0 <= model_no < 100000).
-        Doesn't evaluate until accessed, at which point it default to the next available model_no in the base_dir
+        When unset, the first access selects the lowest unused number in
+        base_dir and caches it. The base directory must already exist.
     base_dir : str
         Path to the main directory where output files are written.
     model_dir : str
         Subdirectory named 'ModelXXXXX', where XXXXX is zero-padded model number.
     nlog : int
-        Timesteps between logging output (default 25,000).
+        Steps between log entries (default 25,000); use a positive integer.
     nupdate : int
-        Timesteps between updating instantaneous timestep counter visual
+        Steps between carriage-return progress messages (default 1000).
+        Use a positive integer; this counter is independent of chatter.
     t_evol : bool
-        Whether to output time evolution data.
+        Enable density/spread-triggered time-history output during integration.
+        State.run also writes initial/final records, and profile output writes
+        a matching time-history record regardless of this flag.
     profiles : bool
-        Whether to output profiles.
+        Enable density-triggered snapshots during integration. Initial/final
+        snapshots are still written by State.from_config and State.run.
     drho_prof : float
-        Change in log of central density to trigger writing profiles to disk.
+        Absolute fractional change in total innermost density to trigger writing profiles to disk.
     drho_tevol : float
-        Change in log of central density to trigger writing time evolution data to disk.
+        Absolute fractional change in total innermost density to trigger writing time evolution data to disk.
+    dr50_tevol : float
+        Fractional change in the half-mass-radius spread that also triggers
+        time-history output for unequal particle masses (default 0.1).
     overwrite : bool
-        Whether to overwrite existing output files.
+        Stored compatibility flag; current writers do not consult it.
+        It does not protect existing files from replacement.
     chatter : bool
         Whether to print status messages during execution.
     """

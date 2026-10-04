@@ -1,9 +1,11 @@
 class Constants:
     """
-    Physical constants used throughout the gravothermal fluid code.
-    
-    All values are in astrophysically convenient units. Advanced users
-    may override these if needed.
+    Physical and cosmological constants used by the simulation.
+
+    gee is in kpc*(km/s)**2/Msun. Characteristic simulation conversions use
+    kpc for length, Msun for mass, km/s for velocity, and Gyr for time.
+    The additional Mpc and cosmological constants support profile scaling.
+    Values are class attributes and may be overridden before constructing a State.
     """
 
     # Gravitational constant in (M_sun^-1 Mpc (km/s)^2)

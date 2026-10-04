@@ -6,8 +6,9 @@ class PrecisionParams:
     ----------
     eps_du : float
         Maximum allowed relative change in internal energy (u) per time step.
-    eps_dt : float
-        Epsilon factor for adjusting time step size.
+    max_iter_du : int
+        Maximum number of trial energy updates per step (default 50).
+        Use a positive value to allow the integrator to accept a step.
     epsabs : float
         Absolute tolerance for numerical integration routines.
     epsrel : float

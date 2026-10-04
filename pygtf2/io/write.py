@@ -212,22 +212,23 @@ def write_log_entry(state, start_step):
         print(new_line[:-1])
 
 def write_profile_snapshot(state, initialize=False):
-    """ 
-    Write full radial profiles to disk.
-    Assumes all radial bins are aligned.
+    """
+    Write dimensionless radial profiles and update the snapshot table.
 
-    Columns:
-        i, log_r, log_rmid,
-        m_tot, rho_tot, eta
-        [for each species in state.labels in order:]
-            m[<label>], rho[<label>], v2[<label>], p[<label>]
+    Totals are interpolated onto a shared radial grid; each species retains
+    its own grid. Columns are i, log_r, log_rmid, m_tot, rho_tot, v2_tot,
+    eta, followed by lgr[label], lgrm[label], m[label], rho[label], and
+    v2[label] for each species. Radius columns are base-10 logarithms.
+    eta is masked outside the species' common radial overlap.
 
-    Arguments
-    ---------
+    Parameters
+    ----------
     state : State
-        The current simulation state.
-    initialize : bool
-        If True, this is part of initializing the grid and should not increment the snapshot index.
+        State to save at its current snapshot_index. The corresponding file
+        is replaced; when initialize=False, higher-index profiles are removed.
+    initialize : bool, optional
+        If True, keep snapshot_index unchanged. Otherwise increment it after
+        writing. The conversion table is updated in either case.
     """
     io = state.config.io
     filename = os.path.join(io.base_dir, io.model_dir, f"profile_{state.snapshot_index}.dat")

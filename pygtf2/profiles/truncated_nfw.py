@@ -41,7 +41,7 @@ def integrand_for_rho(z, phi, Zt, Ft):
 
 def rho(phi, init, prec):
     """
-    Compute density rho(phi) using Eddington-like inversion of the DF.
+    Integrate the lowered NFW distribution function over velocity to obtain rho(phi).
 
     Parameters
     ----------
@@ -283,7 +283,7 @@ def menc_trunc(r, prec, chatter=True, pot_rad=None, pot_interp=None, rho_interp=
     Returns
     -------
     M_enc : float or ndarray
-        Enclosed mass in units of Mvir.
+        Enclosed mass in NFW scale-mass units, with no virial-mass division.
     """
     
     r = np.atleast_1d(np.asarray(r, dtype=np.float64))
@@ -323,8 +323,7 @@ def generate_sigr_integrand_lookup(
         n_points=1000
         ):
     """
-    Generate an interpolated function for the velocity dispersion squared
-    as a function of radius for the truncated NFW profile.
+    Interpolate the Jeans integrand rho(r)*M(<r)/r**2 for the truncated NFW profile.
 
     Parameters
     ----------
@@ -349,8 +348,9 @@ def generate_sigr_integrand_lookup(
 
     Returns
     -------
-    sigr_interp : interp1d
-        Interpolated function for velocity dispersion squared.
+    f_interp : interp1d
+        Interpolated Jeans integrand, not velocity dispersion squared.
+        Values outside the lookup interval are zero.
     """
     if chatter:
         INDENT = ' ' * 8

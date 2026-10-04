@@ -6,7 +6,7 @@ def _etnfw_velocity_integrand(x, bkg_param):
     """
     rho(x) * M(x) / x^2
 
-    rho(r) = (Mtot / 4*pi*r_s^3) * (r_s / r) * e^{-r/r_s} 
+    rho(r) = (Mtot / (4*pi*r_s^3)) * (r_s / r) * e^{-r/r_s}
 
     e.g., https://doi.org/10.1093/mnras/stab1215
 
@@ -16,7 +16,7 @@ def _etnfw_velocity_integrand(x, bkg_param):
         rho_unit = Mtot / (4*pi*r_s^3)
 
     rho(x) = exp(-x) / x
-    M(x)   = 1 - (1 + x) exp(-x)  
+    M(x)   = 1 - (1 + x) exp(-x)
     """
     fac = 1.0 - (1.0 + x) * np.exp(-x)
 
@@ -43,8 +43,8 @@ def sigr_etnfw(r, prec, bkg_param):
 
     Parameters
     ----------
-    r : float or ndarray
-        Radius in units of r_s.
+    r : one-dimensional ndarray
+        Radii in units of r_s. Supply an array even for one radius.
     prec : PrecisionParams
         The simulation PrecisionParams object.
     bkg_param : np.ndarray

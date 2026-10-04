@@ -10,17 +10,11 @@ def hernq_static_scalar(r, m_tot, r_s):
 @njit(float64[:](float64[:], float64, float64), fastmath=True, cache=True)
 def hernq_static(r, m_tot, r_s):
     """
-    Static Hernquist profile.
+    Return Hernquist enclosed mass M(<r) = m_tot*r**2/(r+r_s)**2.
 
-    Arguments
-    ---------
-    r : ndarray
-    m_tot : float
-    r_s : float
-
-    Returns
-    -------
-    ndarray
+    r is a one-dimensional array of radii and r_s is the scale radius in
+    the same length units. m_tot sets the total mass and output mass units.
+    Returns an array matching r; inputs are not modified.
     """
     out = np.empty_like(r)
 

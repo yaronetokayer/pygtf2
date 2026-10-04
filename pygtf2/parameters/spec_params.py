@@ -13,7 +13,8 @@ class SpecParams:
     m_part : float
         Particle mass of the species [Msun].
     frac : float
-        Mass fraction f_k.
+        Positive mass fraction f_k. Species fractions must sum to one within
+        1e-5 when constructing a State.
     init : InitParams
         Initial profile object.
     """

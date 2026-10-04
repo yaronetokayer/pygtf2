@@ -16,7 +16,8 @@ def chi(prec, init):
     Returns
     -------
     float
-        The value of chi.
+        Integral of x**(2-gamma)/(1+x**alpha)**((beta-gamma)/alpha)
+        from zero to 1e4, used as the numerical mass normalization.
     """
     alpha = float(init.alpha)
     beta = float(init.beta)
@@ -54,7 +55,7 @@ def menc_abg(r, init, prec):
 
     Parameters
     ----------
-    r : float or ndarray
+    r : one-dimensional ndarray
         Radius in units of r_s.
     prec : PrecisionParams
         The simulation PrecisionParams object
@@ -92,7 +93,7 @@ def sigr_abg(r, init, prec, bkg_param):
 
     Parameters
     ----------
-    r : float or ndarray
+    r : one-dimensional ndarray
         Radius in units of r_s.
     init: InitParams
         Initial profile parameters object.

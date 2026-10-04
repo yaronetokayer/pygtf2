@@ -5,9 +5,10 @@ class SimParams:
     Attributes
     ----------
     t_halt : float
-        Simulation halt time. Must be positive.
+        Absolute halt time in units of char.t0. Must be positive.
     rho0_halt : float
-        Central density at which to halt the simulation. Must be positive.
+        Total innermost density threshold in units of char.rho_s. Must be
+        positive; the integrator applies this limit after the first 1000 steps.
     lnL_param : float
         Coulomb logarithm calibration parameter. Must be positive.
     alpha : float
@@ -17,14 +18,20 @@ class SimParams:
     beta : float
         Parameter beta from Zhong & Shapiro (2025; arXiv:2505.18251)
     evap : bool
-        Include evaporation in simulation
+        Reserved evaporation switch; the current integrator does not apply it.
     binaries : bool
         Include binary heating in simulation
     n_particle: int
         Absolute particle number for binary heat generation
     conduct_imex : bool
         Use IMEX conduction scheme instead of explicit scheme
-    bkg : dict
+    bkg : dict or None
+        Background configuration with exactly the keys prof, mass, length,
+        and other. None disables the background. For prof='hernq_static',
+        provide mass in Msun and length in kpc; other may be None.
+        'hernq_decay' is accepted by the parameter container but is not
+        implemented by the enclosed-mass routines. The property returns a
+        copy; assign a complete dictionary to change the configuration.
     """
     VALID_BKG_PROFILES = ('hernq_static', 'hernq_decay')
     DEFAULT_BKG = {'prof': None, 'mass': None, 'length': None, 'other': None}

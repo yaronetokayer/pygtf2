@@ -33,8 +33,10 @@ def erfc_numba(x):
 @njit
 def interp_numba(x, xp, fp):
     """
-    xp, fp: 1D increasing arrays
-    returns linear interpolation at x
+    Linearly interpolate fp on strictly increasing one-dimensional xp.
+
+    fp has the same length as xp but need not be monotonic. Values outside
+    xp are clamped to the nearest endpoint value.
     """
     n = xp.size
     if x <= xp[0]:
@@ -60,7 +62,7 @@ def interp_numba(x, xp, fp):
 def evaporate(r, rmid, m, v2, rho, dt):
     """
     Compute evaporation of particles from the halo beyond the escape radius.
-    
+
     Parameters
     ----------
     r : ndarray, shape (s, N+1)
@@ -70,13 +72,16 @@ def evaporate(r, rmid, m, v2, rho, dt):
     m : ndarray, shape (s, N+1)
         Mass enclosed within each radial bin edge (modified in place)
     v2 : ndarray, shape (s, N)
-        Mean squared velocity in each radial bin
+        One-dimensional velocity dispersion squared in each radial bin
     rho : ndarray, shape (s, N)
         Density in each radial bin (modified in place)
     dt : float
         Duration of current timestep
-    m_esc : float
-        Mass threshold to define r_esc
+
+    Notes
+    -----
+    Experimental routine, not called by the current integrator. The escape
+    radius uses a hard-coded enclosed mass of 0.95 in simulation units.
     """
     s, Np1 = r.shape
     N = Np1 - 1

@@ -11,7 +11,13 @@ from pygtf2.dev.debug import plot_r_markers
 
 def run_until_stop(state, start_step, **kwargs):
     """
-    Repeatedly step forward until t >= t_halt or halting criterion met.
+    Advance state in place with adaptive timesteps and periodic output.
+
+    start_step is the step at entry to State.run, used for log averaging.
+    Optional keywords steps and stoptime limit additional steps and elapsed
+    simulation time; rho0 limits the total innermost density. Configured
+    sim.t_halt remains an absolute time limit, and sim.rho0_halt is checked
+    after 1000 total steps. Returns None.
     """
     ##################
     ### Set locals ###
@@ -45,7 +51,8 @@ def run_until_stop(state, start_step, **kwargs):
     Nm1 = N - 1
     work_sn1    = np.empty_like(state.rho, dtype=np.float64)
     work_sn2    = np.empty_like(state.rho, dtype=np.float64)
-    work_snout  = np.empty_like(state.m, dtype=np.float64)
+    work_snout1 = np.empty_like(state.m, dtype=np.float64)
+    work_snout2 = np.empty_like(state.m, dtype=np.float64)
     work_n1     = np.empty(N,      dtype=np.float64)
     work_n2     = np.empty(N,      dtype=np.float64)
     work_n3     = np.empty(N,      dtype=np.float64)
@@ -102,7 +109,7 @@ def run_until_stop(state, start_step, **kwargs):
                             conduct_imex, binaries, # evap,         # Switches
                             eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param, n_particle,  # Parameters
                             work_sn1, work_sn2,                     # Preallocated arrays
-                            work_snout,
+                            work_snout1, work_snout2,
                             work_n1, work_n2, work_n3, work_n4,
                             work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
                             )
@@ -182,7 +189,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
                         eps_du, max_iter_du,
                         c1, c2, mrat, lnL, bkg_param, n_particle,   # Parameters
                         work_sn1, work_sn2,                         # Preallocated arrays
-                        work_snout,
+                        work_snout1, work_snout2,
                         work_n1, work_n2, work_n3, work_n4,
                         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,  
                         ):
@@ -195,7 +202,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     state : State
         The current simulation state.
     dt_prop : float
-        Proposed dt value returned by compute_time_step
+        Proposed timestep from the caller's adaptive controller.
     step_count : int
         Step count
     conduct_imex : bool
@@ -205,19 +212,19 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     eps_du : float
         Maximum allowed fractional change in v2 per time step.
     max_iter_du : int
-        Maximum number of allowed iterations for conduction.
+        Maximum number of trial energy updates, including binary heating
+        when enabled. Failure to accept a trial raises RuntimeError.
     c1, c2, mrat, lnL : float or array-like
         Model parameters.
-    bkg_param : dict
+    bkg_param : ndarray, shape (4,)
         Background potential parameters.
     n_particle : int
         Absolute particle number for heat generation due to binaries.
-    a_alloc, b_alloc, c_alloc, y_alloc, x_alloc : ndarray (N-1,)
-        Memory allocation for working arrays
     work_sn1, work_sn2 : ndarray (s,N)
         Memory allocation for working arrays
-    work_snout : ndarray (s,N+1)
-        Memory allocation for working arrays
+    work_snout1, work_snout2 : ndarray (s,N+1)
+        Total enclosed mass and other-species mass-derivative workspaces,
+        respectively, for revirialization.
     work_n1, work_n2, work_n3, work_n4 : ndarray (N,)
         Memory allocation for working arrays
     work_nin1, work_nin2, work_nin3, work_nin4, work_nin5 : ndarray (N-1,)
@@ -311,7 +318,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     status = revirialize_interp_jacobi(
         r, rho, work_sn1, m, bkg_param,
         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
-        work_n1, work_sn2, work_snout,
+        work_n1, work_snout2, work_snout1,
         ) # Modifies r, rho, p in place
 
     # Shell crossing

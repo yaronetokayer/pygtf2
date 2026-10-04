@@ -119,7 +119,7 @@ def interp_linear_to_interfaces(r_edges_1d, q_cells_1d) -> np.ndarray:
     using the non-uniform-spacing-aware formula:
 
         fac_i      = (r_i - r_{i-1}) / (r_{i+1} - r_{i-1})
-        q_interface = q_i + fac_i * (q_{i+1} - q_i)
+        q_interface = q_{i-1} + fac_i * (q_i - q_{i-1})
 
     Parameters
     ----------

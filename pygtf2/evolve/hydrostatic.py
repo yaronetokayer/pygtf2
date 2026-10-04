@@ -11,18 +11,9 @@ _TINY64 = np.finfo(np.float64).tiny
 @njit(float64[:](float64[:]), cache=True, fastmath=True)
 def compute_mass(m) -> np.ndarray:
     """
-    Placeholder function to compute mass used in build_tridiag_system.
-    Accounts for baryons, perturbers, etc. in future implementations.
+    Return the input enclosed-mass array unchanged, without copying it.
 
-    Arguments
-    ---------
-    m : ndarray
-        Enclosed fluid mass at each radial grid point.
-
-    Returns
-    -------
-    ndarray
-        Total mass for hydrostatis equilibrium calculations.
+    This legacy identity helper does not add other species or backgrounds.
     """
 
     return m
@@ -30,8 +21,9 @@ def compute_mass(m) -> np.ndarray:
 @njit(void(float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
 def update_r_p_rho(r, x, p, rho, work):
     """
-    Updates r, and then finds p, rho, and v2 based on exact volume ratios.
-    Ensures positivity and stability.
+    Update interior radii, then density and pressure from shell-volume ratios.
+    Pressure follows an adiabatic exponent of 5/3; v2 is not an argument.
+    New volumes are floored at the smallest positive float for division.
     All updates are performed in place.
 
     Parameters
@@ -179,7 +171,7 @@ def build_tridiag_system(r, rho, p, m_tot, a, b, c, y):
     Notes
     -----
     - The unknown vector x contains the interior fractional displacements x_j = Δr_j / r_j
-      (excluding the fixed inner and outer edges), so the returned arrays all have length M-2.
+      (excluding the fixed inner and outer edges), so the returned arrays all have length N-2.
     - The routine linearizes the hydrostatic update using finite differences and geometric
       volume factors. Small numerical floors are applied to pressure differences and density sums
       to prevent divide-by-zero or overflow. The outputs are arranged for direct use with the
@@ -463,7 +455,7 @@ def compute_he_pressures(r, rho, p, m, bkg_param):
     p : ndarray, shape (s, N)
         Shell pressures per species. Updated in place.
     m : ndarray, shape (s, N+1)
-        Enclosed-mass-like data used by interp_m_enc().
+        Each species' own enclosed mass at its radial edges.
     bkg_param : ndarray, shape (4,)
         Parameters for background potential.
     """
@@ -513,7 +505,7 @@ def compute_he_pressures_with_resid(r, rho, p, m, bkg_param):
     p : ndarray, shape (s, N)
         Shell pressures per species. Updated in place.
     m : ndarray, shape (s, N+1)
-        Enclosed-mass-like data used by interp_m_enc().
+        Each species' own enclosed mass at its radial edges.
     bkg_param : ndarray, shape (4,)
         Parameters for background potential.
 
@@ -554,10 +546,10 @@ def revirialize_interp_jacobi(
     """
     Multi-species re-virialization, Jacobi-style in the inter-species coupling.
 
-    Updates r, rho, and p in place, but uses a frozen copy of the original r
-    array for every species' re-virialization during this sweep.  This prevents
-    earlier species' radius updates from feeding back into later species within
-    the same call.
+    Updates r, rho, and p in place after computing every species' total
+    enclosed mass and other-mass derivative on the original grids. These
+    frozen coupling arrays prevent earlier radius updates from affecting
+    later species within the same sweep.
 
     Parameters
     ----------
@@ -568,9 +560,15 @@ def revirialize_interp_jacobi(
     p : ndarray, shape (s, N)
         Shell pressures per species. Updated in place.
     m : ndarray, shape (s, N+1)
-        Total enclosed mass at edges, per species. Not updated.
+        Each species' own enclosed mass at its edges. Not updated.
     bkg_param : ndarray, shape (4,)
         Parameters for background potential.
+    a, b, c, y, xk : ndarray, shape (N-1,)
+        Scratch arrays for the tridiagonal solve; overwritten in place.
+    vol_old : ndarray, shape (N,)
+        Scratch array for old shell volumes.
+    K_all, m_tot_all : ndarray, shape (s, N+1)
+        Scratch arrays for other-mass derivatives and total enclosed masses.
 
     Returns
     -------
@@ -626,7 +624,7 @@ def revirialize_interp_jacobi_diagnostics(
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
     ) -> tuple:
     """
-    Multi-species re-virialization.  Jacobi-style in the inter-species coupling..  With diagnostics.
+    Apply Jacobi-style multi-species revirialization and return diagnostics.
     To be used during state initialization.
 
     Solves for radius adjustments and updates physical quantities for all species.
@@ -642,9 +640,15 @@ def revirialize_interp_jacobi_diagnostics(
     p : ndarray, shape (s, N)
         Shell pressures per species. Updated in place.
     m : ndarray, shape (s, N+1)
-        Total enclosed mass at edges, per species. Not updated.
+        Each species' own enclosed mass at its edges. Not updated.
     bkg_param : ndarray, shape (4,)
         Parameters for background potential.
+    a, b, c, y, xk : ndarray, shape (N-1,)
+        Scratch arrays for the tridiagonal solve; overwritten in place.
+    vol_old : ndarray, shape (N,)
+        Scratch array for old shell volumes.
+    K_all, m_tot_all : ndarray, shape (s, N+1)
+        Scratch arrays for other-mass derivatives and total enclosed masses.
 
     Returns
     -------
@@ -661,7 +665,7 @@ def revirialize_interp_jacobi_diagnostics(
     -----
     This function solves a tridiagonal system to compute radius corrections for each species,
     then updates density and pressure accordingly. If any radii cross, the function returns
-    'shell_crossing'. Since updates are in place, the arrays may already be partially or fully 
+    the integer STATUS_SHELL_CROSSING. Since updates are in place, the arrays may already be partially or fully
     modified when that happens.
     """
     s, Np1 = r.shape

@@ -22,18 +22,29 @@ def _init_param(param_class, arg):
 
 class Config:
     """
-    Central container for all static simulation parameters.
+    Container for static simulation parameters and species definitions.
+
+    Parameters
+    ----------
+    io, grid, sim, prec : parameter object, dict, or None
+        IOParams, GridParams, SimParams, and PrecisionParams respectively.
+        Dictionaries supply constructor keywords; None uses defaults. Supplied
+        parameter objects are retained by reference.
+    mtot : float, optional
+        Positive total mass normalization in Msun; default 5e5.
 
     Attributes
     ----------
-    io : IOParams
-    grid : GridParams
-    sim : SimParams
-    prec : PrecisionParams
+    spec : dict of str to SpecParams
+        Species definitions. Initially empty; populate with add_species before
+        constructing a State. Their positive mass fractions must sum to one
+        within 1e-5 when the State is created.
+    s : int
+        Number of species, computed from spec.
+    io, grid, sim, prec
+        Parameter containers described above.
     mtot : float
-        Total mass of the halo in Msun (global).
-    spec : Dict[str, SpecParams]
-        Dictionary of species specifications, keyed by species name.
+        Total mass normalization in Msun.
     """
 
     def __init__(
@@ -75,11 +86,26 @@ class Config:
         init: InitParams | str | Tuple[str, Dict[str, Any]] | None = None,
     ) -> SpecParams:
         """
-        Create and add a species to the config.
+        Create a species definition and return its editable SpecParams object.
 
-        If no arguments are given, defaults are used and the user can edit later.
+        Parameters
+        ----------
+        name : str or None, optional
+            Dictionary key, defaulting to 'spec' followed by the current species
+            count. An existing key is replaced with a printed notice.
+        m_part : float, optional
+            Positive particle mass in Msun; default 1.
+        frac : float, optional
+            Positive mass fraction; default 1. Fractions are checked together when
+            constructing a State, not when adding individual species.
+        init : InitParams, str, tuple, or None, optional
+            Profile parameters, a profile name, or (profile_name, keyword_dict).
+            None selects the default NFW profile.
 
-        Returns the SpecParams object so it can be modified directly.
+        Returns
+        -------
+        SpecParams
+            The same object stored in config.spec[name].
         """
         if name is None:
             name = f"spec{len(self.spec)}"
@@ -119,14 +145,21 @@ class Config:
     # --- Loading from metadata for a State.from_dir() ---
     @classmethod
     def from_dict(cls, meta: Dict[str, Dict[str, Any]]) -> "Config":
-        """"
-        Build a Config from the nested dict produced by pygtf2.io.read.import_metadata().
+        """
+        Reconstruct configuration parameters from import_metadata output.
 
-        This is used when a state is constructed with State.from_dir().
+        The mapping must contain grid, io, prec, sim, and mtot (or _mtot).
+        Parameter keys may have leading underscores. The optional spec mapping
+        contains species definitions with m_part, frac, and an init block whose
+        profile selector is prof. This restores configuration only; it does not
+        load an evolved State or make the disabled State.from_dir usable.
+        Saved output paths are retained; change io.base_dir before writing to a
+        new location.
 
-        Expected sections:
-        "_mtot", "grid", "io", "prec", "sim", "spec"
-        Keys may be prefixed with underscores (e.g., "_alpha", "_r_s", ...).
+        Returns
+        -------
+        Config
+            Reconstructed configuration.
         """
 
         # Helper to strip leading underscores off keys

@@ -9,7 +9,8 @@ class GridParams:
     rmax : float
         Maximum radius of the grid, in units of the scale radius (r / r_s).
     ngrid : int
-        Number of radial grid points (must be > 1).
+        Number of radial shells (must be > 1). Each species has ngrid+1
+        edges, including the origin, and ngrid shell-centered values.
     """
 
     def __init__(

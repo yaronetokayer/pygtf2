@@ -4,7 +4,7 @@ from pygtf2.util.calc import add_bkg_pot_scalar
 
 def fNFW(r):
     """
-    Analytic NFW mass profile: M(<r) / Mvir
+    Analytic NFW mass factor f(r) = log(1+r) - r/(1+r).
 
     Parameters
     ----------
@@ -14,7 +14,8 @@ def fNFW(r):
     Returns
     -------
     M_enc : float or ndarray
-        Enclosed mass as a fraction of Mvir.
+        Enclosed mass in NFW scale-mass units. Divide by fNFW(cvir)
+        to obtain the fraction of the mass within cvir.
     """
     
     r = np.asarray(r, dtype=np.float64)
@@ -36,8 +37,8 @@ def sigr_nfw(r, prec, bkg_param):
 
     Parameters
     ----------
-    r : float or ndarray
-        Radius in units of r_s.
+    r : one-dimensional ndarray
+        Radii in units of r_s. Supply an array even for one radius.
     prec : PrecisionParams
         The simulation PrecisionParams object
     bkg_param : np.ndarray

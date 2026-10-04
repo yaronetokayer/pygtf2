@@ -161,7 +161,23 @@ def get_time_conversion(filepath, index, phys=False):
 
 def extract_snapshot_data(filepath, add_time=True):
     """
-    Extract data from a multi-species snapshot timestep file.
+    Read a profile_<index>.dat file into global and species arrays.
+
+    Parameters
+    ----------
+    filepath : str or Path
+        Snapshot file path.
+    add_time : bool, optional
+        If True (default), look up the filename's index in the neighboring
+        snapshot_conversion.txt and add time in simulation units.
+
+    Returns
+    -------
+    dict
+        Global header columns map to one-dimensional arrays. Species columns
+        such as rho[name] are nested under result['species'][name]['rho'].
+        Radii remain base-10 logarithms; other profile values retain their
+        dimensionless simulation units. The optional time is a scalar.
     """
 
     # Read first line
@@ -219,7 +235,7 @@ def import_metadata(model_dir: Union[Path, str]) -> Dict[str, Dict[str, Any]]:
             dm:
                 _frac: 1.0
                 _init:
-                    profile: abg
+                    prof: abg
                     _r_s: 1.0
             stars:
                 _frac: 0.8
@@ -303,23 +319,22 @@ def import_metadata(model_dir: Union[Path, str]) -> Dict[str, Dict[str, Any]]:
 
 def load_snapshot_bundle(model_dir: Union[str, Path], snapshot: Optional[int] = None) -> Dict[str, Any]:
     """
-    Load one snapshot's arrays (via extract_snapshot_data) and add *current* run info
-    from the last row of snapshot_conversion.txt.
+    Load one saved snapshot with its matching step and time.
 
     Parameters
     ----------
-    model_dir : str | Path
-        Path to the model directory.
-    snapshot : int or None
-        Snapshot index to load. If None, loads the latest snapshot in snapshot_conversion.txt.
+    model_dir : str or Path
+        Model directory containing profiles and snapshot_conversion.txt.
+    snapshot : int or None, optional
+        Snapshot index to load. None selects the table's last entry.
 
     Returns
     -------
     dict
-        Includes everything from extract_snapshot_data(profile_<idx>.dat) plus:
-          - 'snapshot_index'       : int  (the index that was loaded)
-          - 'current_step_count'   : int  (last row of snapshot_conversion.txt)
-          - 'current_time'         : float (simulation units, last row)
+        Global and nested species arrays from extract_snapshot_data, plus
+        snapshot_index (int), step_count (int), and time (float, in simulation
+        units). All three refer to the selected snapshot, not the latest run
+        state. This function does not construct a State or resume integration.
     """
     # Basic checks
     pdir = Path(model_dir)

@@ -393,9 +393,9 @@ def revirialize_interp(r, rho, p, m, bkg_param) -> tuple[
     """
     Multi-species re-virialization.
     Solves for radius adjustments and updates physical quantities for all species.
-    Assumes all species have aligned radial bins.
+    Allows different radial grids for each species.
     Interpolates the mass enclosed for the radial bins of each species.
-    Updates to per-species r arrays are fed back into next species revir - this is found to be necessary.
+    Uses sequential inter-species updates (Gauss-Seidel coupling).
 
     Parameters
     ----------
@@ -540,7 +540,7 @@ def build_tridiag_system(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.n
     Notes
     -----
     - The unknown vector x contains the interior fractional displacements x_j = Δr_j / r_j
-      (excluding the fixed inner and outer edges), so the returned arrays all have length M-2.
+      (excluding the fixed inner and outer edges), so the returned arrays all have length N-2.
     - The routine linearizes the hydrostatic update using finite differences and geometric
       volume factors. Small numerical floors are applied to pressure differences and density sums
       to prevent divide-by-zero or overflow. The outputs are arranged for direct use with the
@@ -602,8 +602,8 @@ def build_tridiag_system(r, rho, p, m_tot) -> tuple[np.ndarray, np.ndarray, np.n
       cache=True, fastmath=True)
 def _update_r_p_rho(r, x, p, rho) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Updates r, and then finds p, rho, and v2 based on exact volume ratios.
-    Ensures positivity and stability.
+    Return updated copies of r, p, and rho using shell-volume ratios.
+    No velocity-dispersion array is returned.
 
     r: edge radii, shape (N+1,)
     x: interior stretch, x_j = dr_j / r_j for j=1..N-1, shape (N-1,)

@@ -45,9 +45,10 @@ def integrand_for_rho(v, Psi):
 
 def rho(Psi, prec):
     """
-    Dimensionless density nu(w) = rho(Psi) / rho0; rho0 = central density
-    w = Psi / sigma^2, dimensionless relative potential
-    This gives rho(Psi)
+    Integrate the King distribution function over velocities at Psi.
+
+    Returns unnormalized density with sigma=1. Division by rho(W0) to
+    obtain nu(W) is performed separately by generate_nu_lookup.
 
     Arguments
     ---------
@@ -275,15 +276,15 @@ def menc_king(r, prec, chatter=True, rt=10.0, w_interp=None, nu_interp=None, **_
         The simulation PrecisionParams object.
     chatter: bool
         Chatter flag.
-    pot_interp : scipy interp1d
+    w_interp : scipy interp1d
         Interpolated numerically integrated potential function.
-    rho_interp : scipy interp1d
+    nu_interp : scipy interp1d
         Interpolated numerically integrated density function.
 
     Returns
     -------
     M_enc : float or ndarray
-        Enclosed mass in units of Mvir.
+        Enclosed mass divided by the mass integral out to 1.05*rt.
     """
     r = np.atleast_1d(np.asarray(r, dtype=np.float64))
     epsabs = float(prec.epsabs)
@@ -332,8 +333,7 @@ def generate_sigr_integrand_lookup(
         n_points=1000
         ):
     """
-    Generate an interpolated function for the velocity dispersion squared
-    as a function of radius for the truncated NFW profile.
+    Interpolate the Jeans integrand rho(r)*M(<r)/r**2 for the King profile.
 
     Parameters
     ----------
@@ -356,8 +356,9 @@ def generate_sigr_integrand_lookup(
 
     Returns
     -------
-    sigr_interp : interp1d
-        Interpolated function for velocity dispersion squared.
+    f_interp : interp1d
+        Interpolated Jeans integrand, not velocity dispersion squared.
+        Values outside the lookup interval are zero.
     """
     if chatter:
         INDENT = ' ' * 8
@@ -390,7 +391,7 @@ def sigr_king(
         nu_interp=None,
         **_,
         ):
-    """ 
+    """
     v^2 profile for King halo.
 
     Parameters
@@ -406,7 +407,7 @@ def sigr_king(
     grid : GridParams
         The simulation GridParams object.
     rt : float
-        Numerically calculated truncation radius for Kingpotential.
+        Numerically calculated truncation radius for King potential.
     w_interp : scipy interp1d
         Interpolated numerically integrated potential function.
     nu_interp : scipy interp1d

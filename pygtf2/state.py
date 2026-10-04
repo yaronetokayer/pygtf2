@@ -6,11 +6,11 @@ from pathlib import Path
 def _xH(z, const):
     """
     Returns H(z) in units of km/s/Mpc using cosmological parameters
-    defined in config.constants or config.init.
+    supplied by the const argument.
 
     Parameters
     ----------
-    z : float
+    z : float or array-like
         Redshift.
 
     const : Constants
@@ -18,7 +18,7 @@ def _xH(z, const):
 
     Returns
     -------
-    H_z : float
+    H_z : float or ndarray or array-like
         Hubble parameter at redshift z [km/s/Mpc].
     """
     Omega_m = float(const.Omega_m)
@@ -55,8 +55,16 @@ def _print_time(start, end, funcname):
 
 class State:
     """
-    Holds characteristic scales, grid, physical variables, time tracking,
-    and simulation diagnostics. Constructed from a Config object.
+    Mutable multi-species simulation state and characteristic scales.
+
+    Use State.from_config(config) to initialize the grids and output files.
+    The constructor alone sets species ordering, scales, and profile lookup
+    functions; it does not initialize all evolving arrays. The Config is
+    retained by reference. Species are ordered by descending particle mass.
+    Radial edges and enclosed masses have shape (s, ngrid+1); densities and
+    one-dimensional velocity dispersions squared have shape (s, ngrid).
+    Evolving arrays and time use dimensionless simulation units; char stores
+    the physical conversions. Loading a saved State is not yet supported.
     """
 
     def __init__(self, config):
@@ -99,7 +107,11 @@ class State:
     @classmethod
     def from_config(cls, config):
         """
-        Create a State object from a Config object.
+        Initialize a State in hydrostatic equilibrium and write initial outputs.
+
+        Creates the model directory, writes metadata and characteristic scales,
+        and writes snapshot 0 and its conversion-table entry. Existing files at
+        these paths may be replaced, regardless of config.io.overwrite.
 
         Parameters
         ----------
@@ -126,18 +138,12 @@ class State:
     @classmethod
     def from_dir(cls, model_dir: str, snapshot: None | int = None):
         """
-        Create a State object from an existing model directory (multi-species aware).
+        Reserved interface for restoring a State from saved output.
 
-        Parameters
-        ----------
-        model_dir : str
-            Path to the model directory containing simulation data.
-        snapshot : int, optional
-            Snapshot index to load. If None, loads the latest snapshot.
-
-        Returns
-        -------
-        State
+        Currently always raises RuntimeError because restart support is still
+        in development. Use pygtf2.io.read.load_snapshot_bundle to inspect saved
+        arrays and Config.from_dict(import_metadata(...)) to recover parameters;
+        neither resumes integration.
         """
         raise RuntimeError("this module is still in development")
         # --- basic checks
@@ -280,8 +286,11 @@ class State:
 
     def _set_param(self):
         """
-        Compute and set characteristic physical quantities.
-        lnL, mrat, 
+        Return characteristic scales using the heaviest species' profile.
+
+        Masses are in Msun, lengths in kpc, velocities in km/s, and time in Gyr.
+        The returned CharParams also contains the normalized Coulomb logarithm
+        matrix and the dimensionless transport coefficients c1 and c2.
         """
         from pygtf2.parameters.char_params import CharParams
         from pygtf2.profiles.nfw import fNFW
@@ -372,32 +381,13 @@ class State:
 
     def _set_bkg_param(self):
         """
-        Configure background potential parameters from self.config.sim.bkg.
+        Encode the configured background as a float64 array of length four.
 
-        Reads the background description stored in config.sim.bkg and encodes it into
-        a compact, fixed-size numpy array that can be passed efficiently to the rest
-        of the codebase.
-
-        Returns
-        -------
-        numpy.ndarray
-            - If a background potential is specified: a 1D numpy array (dtype float64)
-              of length 4 with the following entry meanings:
-            [0] : integer code identifying the background potential
-                (-1 = no background; nonnegative values map to analytic profiles).
-            [1] : mass-like parameter for the profile (e.g. total mass, M_s).
-            [2] : length-scale parameter for the profile (e.g. scale radius a or r_s).
-            [3] : additional profile-dependent parameter (e.g. truncation radius,
-                  concentration, or shape parameter). Set to 0.0 if unused.
-
-        Notes
-        -----
-        - Units of the returned mass and length parameters match the units used elsewhere
-          in the simulation (as defined in the Config object).
-        - The integer code and the interpretation of elements [1]–[3] depend on the set
-          of background profile implementations supported by the project. Callers should
-          consult the profile implementations or the configuration documentation for the
-          exact mapping between codes and profile parameter meanings.
+        Entries are [profile_code, mass/char.m_s, length/char.r_s, other].
+        Codes are -1 for no background, 0 for static Hernquist, and 1 for the
+        reserved, unimplemented decaying Hernquist profile. Unused entries are
+        zero. A configured background also updates char.t0 and char.lnL using
+        its enclosed mass at the outer grid radius.
         """
         from pygtf2.util.calc import add_bkg_pot_scalar
 
@@ -467,10 +457,7 @@ class State:
         """
         Constructs the Lagrangian radial grid in log-space between rmin and rmax.
 
-        Parameters
-        ----------
-        config : Config
-            The simulation configuration object.
+        Uses self.config.grid and self.config.s.
 
         Returns
         -------
@@ -501,13 +488,12 @@ class State:
     
     def _initialize_grid(self):
         """
-        Computes initial physical quantities on the radial grid using the
-        initial profile defined in config.
+        Populate dimensionless species profiles on self.r.
 
-        Sets the following attributes:
-            - m: Enclosed mass at r[i+1]
-            - rho: Density in each shell (size ngrid)
-            - v2: Velocity dispersion squared in each shell
+        Sets m at all edges (shape (s, ngrid+1)), including zero at the origin,
+        and rmid, rho, and v2 at shell centers (shape (s, ngrid)). Each mass
+        profile is scaled by its species mass fraction. The central pressure
+        is adjusted before the subsequent hydrostatic-equilibrium iteration.
         """
         from pygtf2.profiles.profile_init_routines import menc, sigr
         config = self.config
@@ -581,7 +567,8 @@ class State:
         """
         Fine-tunes initial profile to ensure hydrostatic equilibrium.
         First update pressure with a backward sweep, then
-        iteratively runs revirialize() until max |dr/r| < eps_dr.
+        iteratively applies Jacobi revirialization until max |dr/r| < 1e-10.
+        Raises RuntimeError on shell crossing or failure within 100 iterations.
         """
         from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING
         chatter = self.config.io.chatter
@@ -658,7 +645,12 @@ class State:
 
     def reset(self):
         """
-        Resets initial state
+        Reinitialize grids and profiles and reset time, counters, and diagnostics.
+
+        Uses the current config with the existing species hierarchy, characteristic
+        scales, and profile lookup tables. This is not a full rebuild after arbitrary
+        configuration changes; use State.from_config for that. No output files are
+        changed until a subsequent write or run, which can replace existing data.
         """
         from pygtf2.util.calc import calc_r50_spread, mass_fraction_radii
         from pygtf2.util.interpolate import sum_intensive_loglog_single
@@ -697,18 +689,25 @@ class State:
 
     def run(self, steps=None, stoptime=None, rho0=None):
         """
-        Run the simulation until a halting criterion is met.
-        User can set halting criteria to run for a specified duration.
-        These are overridden by the halting criteria in self.config.
+        Advance the state until any requested or configured stop condition is met.
 
-        Arguments 
-        ---------
+        Parameters
+        ----------
         steps : int, optional
-            Number of steps to advance the simulation
+            Number of additional integration steps.
         stoptime : float, optional
-            Amount of simulation time by which to advance the simulation
-        rho0: float, optional
-            Max central denisty value to advance until
+            Additional duration in units of char.t0, measured from this call's
+            starting time (not an absolute end time).
+        rho0 : float, optional
+            Total innermost density threshold in units of char.rho_s.
+
+        Notes
+        -----
+        Configured sim.t_halt remains an absolute time limit; sim.rho0_halt is
+        also checked after the first 1000 total steps. Conditions are checked
+        at step boundaries, so time/density thresholds can be overshot.
+        Writes initial/final snapshots, time-history records, and log entries,
+        and updates the State in place. Returns None.
         """
         from pygtf2.evolve.integrator import run_until_stop
         from pygtf2.io.write import write_log_entry, write_profile_snapshot, write_time_evolution
@@ -744,25 +743,14 @@ class State:
 
     def plot_time_evolution(self, **kwargs):
         """
-        Plot any time-evolution quantity vs. time for for the simulation represented by
-        the State object
+        Plot this model's saved time-history data.
 
-        Arguments
-        ---------
-        quantity : str, optional
-            Key from the time_evolution.txt file to plot on the y-axis.
-            Default is 'rho0'.
-            Options are 'rho0', 'v2_c', 'r_c', 'mintrel', 'r_enc'.
-        ylabel : str, optional
-            Custom y-axis label. Defaults to quantity.
-        logy : bool, optional
-            Use logarithmic scale on y-axis. Default is True.
-        filepath : str, optional
-            If specified, saves the figure to this path.
-        show : bool, optional
-            If True, show the plot even if saving.  Default is False.
-        grid : bool, optional
-            If True, shows grid on axis
+        Forwards keyword arguments to pygtf2.plot_time_evolution. The default
+        quantity is 'rho_c' (core density), with logarithmic y scale. Supported
+        quantities are 'rho_c', 'rho0', 'v2_c', 'r_c', 'eta_c', 'm_c',
+        'v20_tot', and 'r_enc'. Uses time_evolution.txt, not unsaved state arrays.
+        See the top-level function for labels, saving, and display options.
+        Returns None.
         """
         from pygtf2.plot.time_evolution import plot_time_evolution
 
@@ -770,21 +758,13 @@ class State:
 
     def plot_snapshots(self, **kwargs):
         """
-        Method to plot up to three profiles at specified points in time for the simulation represented by
-        the State object
+        Plot saved radial profiles for this model.
 
-        Arguments
-        ---------
-        snapshots : int or list of int, optional
-            Snapshot indices to plot, default is the current state
-        profiles : str or list of str, optional
-            Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta, 'p', 'kn'
-        filepath : str, optional
-            If provided, save the plot to this file.
-        show : bool, optional
-            If True, show the plot even if saving.  Default is False.
-        grid : bool, optional
-            If True, shows grid on axes
+        Forwards keyword arguments to pygtf2.plot_snapshots, but defaults
+        snapshots to -1 (latest saved snapshot). This does not plot unsaved
+        state arrays. Profiles are 'rho', 'm', 'v2', and 'eta', with 'rho' as
+        the default. See the top-level function for axis and display options.
+        Returns None.
         """
         from pygtf2.plot.snapshot import plot_snapshots
 

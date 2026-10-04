@@ -7,7 +7,7 @@ class CharParams:
     Attributes
     ----------
     r_s : float
-        Scale radius [Mpc].
+        Scale radius [kpc].
     fc : float or None
         NFW normalization factor.
     chi : float or None
@@ -15,13 +15,14 @@ class CharParams:
     m_s : float
         Characteristic mass scale [Msun].
     t0 : float
-        Characteristic time scale [sec].
+        Characteristic time scale [Gyr].
     v0 : float
         Characteristic velocity scale [km/s].
     rho_s : float
-        Characteristic density [Msun / Mpc^3].
+        Characteristic density [Msun / kpc^3].
     lnL : ndarray
-        Coulomb logarithm matrix
+        Dimensionless Coulomb logarithm matrix, divided by the reference
+        logarithm for the heaviest/lightest species pair.
     c1 : float
         Parameter c1 from Zhong & Shapiro (2025; arXiv:2505.18251) Eq. 42
     c2 : float

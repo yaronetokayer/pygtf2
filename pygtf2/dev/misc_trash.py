@@ -5,8 +5,7 @@
 def compute_he_pressures(r, rho, p, m, bkg_param):
     """
     Compute pressure array such that the density profile will be in HE
-    This is used after grid initialization to ensure stability in 
-    early revirializations.
+    This legacy routine predates the current initialization path.
     Here we assume that radial grid points are aligned.
 
     Arguments
@@ -17,14 +16,14 @@ def compute_he_pressures(r, rho, p, m, bkg_param):
         Shell densities per species.
     p : ndarray, shape (s, N)
         Shell pressures per species.
-    m_tot : ndarray, shape (s, N+1)
-        Total enclosed mass at edges per species.
+    m : ndarray, shape (s, N+1)
+        Each species' enclosed mass at its edges.
     bkg_param : ndarray, shape (4,)
         Parameters for background potential
 
     Returns
     -------
-    p_new : ndarray, shape (s, N+1)
+    p_new : ndarray, shape (s, N)
         Updated shell pressure per species.
     res_old : float
         HE residual of input arrays.
@@ -75,7 +74,8 @@ def compute_luminosities(c2, r, u, rho, mrat, lnL) -> np.ndarray:
         Density for each cell.
     mrat : ndarray
         Mass ratio of species (length = s)
-    lnL : ndarray lnL array.
+    lnL : ndarray, shape (s, s)
+        Coulomb logarithm coefficients.
     
     Returns
     -------
@@ -130,7 +130,7 @@ def conduct_heat(m, u, rho, lum, lnL, mrat, r, dt_prop, eps_du, c1) -> tuple[np.
     -----
     - Luminosities `lum` are defined at cell interfaces (length N+1 per species).
     - Pressure is recomputed as p = (2/3) * rho * u_new.
-    - The function returns the updated pressure array, the observed maximum relative
+    - The function returns the updated pressure and v2 arrays, the observed maximum relative
       change in u (dumax), and the effective timestep used (dt_eff). The updated
       internal energy array (u_new) is not returned.
 
@@ -311,8 +311,8 @@ def compute_rc_frac(r, m, r_c, rc_frac):
         Mass arrays per species
     r_c : float
         Core radius
-    f_k : array-like, shape (s,)
-        f_k for each species
+    rc_frac : array-like, shape (s,)
+        Preallocated species fractions, overwritten in place.
     """
     s, _ = r.shape
 

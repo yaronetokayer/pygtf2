@@ -47,22 +47,24 @@ def solve_tridiagonal_thomas(a, b, c, y, x):
 @njit((float64[:], float64[:, :], float64[:], float64[:]), fastmath=True, cache=True)
 def compute_eta_multi(masses, sigmas, eta_out, err_out):
     """
-    Compute eta for arbitrary number of species using log-log regression.
-    
-    Arguments
-    ---------
-    masses : array-like, shape (s,)
-        Mass of each species.
-    sigmas : array-like, shape (s, N)
-        Velocity dispersions for each species.
-    Return arrays are preallocated
-        
+    Fit sigma proportional to particle_mass**(-eta) at each radius.
+
+    Parameters
+    ----------
+    masses : ndarray, shape (s,)
+        Positive particle masses, not total species masses.
+    sigmas : ndarray, shape (s, N)
+        Positive one-dimensional velocity dispersions (not their squares).
+    eta_out : ndarray, shape (N,)
+        Preallocated fitted exponents, overwritten in place. Equal particle
+        masses give zero slope.
+    err_out : ndarray, shape (N,)
+        Preallocated RMS residuals in natural-log space, overwritten in place.
+
     Returns
     -------
-    eta_out : float or ndarray of shape (N,)
-        Best-fit equipartition exponent(s).
-    error_out : float or ndarray of shape (N,)
-        RMS residual in log-log space; measure of deviation from power law.
+    None
+        Results are written to the supplied buffers.
     """
     s, N = sigmas.shape
 
@@ -116,9 +118,12 @@ def compute_eta_multi(masses, sigmas, eta_out, err_out):
 
 def compute_eta(masses, sigmas):
     """
-    User-facing function.
-    If only one species: eta = 0, error = 0.
-    Otherwise: call numba backend.
+    Return equipartition exponents and natural-log RMS fit residuals.
+
+    masses contains positive particle masses. sigmas contains positive
+    one-dimensional velocity dispersions, shaped (s, N), not v2. Multiple
+    species return two arrays of length N. A one-dimensional sigmas input
+    or a single species returns the scalar pair (0.0, 0.0).
     """
     masses = np.asarray(masses)
     sigmas = np.asarray(sigmas)
@@ -145,26 +150,28 @@ def compute_eta(masses, sigmas):
 def compute_eta_interp(masses, rmid, v2, rmax=0.0):
     r"""
     Compute eta profile for arbitrary number of species.
-    Defines a shared grid, computes the interpolated v2, 
-    and the computes eta for each radial bin.
+    Defines a shared grid, computes the interpolated v2,
+    and then computes eta for each radial bin.
 
     eta defined by sigma \propto m^-eta
-    
+
     Arguments
     ---------
     masses : array-like, shape (s,)
-        Mass of each species.
+        Particle mass of each species.
     rmid : array-like, shape (s, N)
         Midpoints of radial grid points per species, where v2 is evaluated.
-    v2 : array-like, shape (N,) or (s, N)
+    v2 : ndarray, shape (s, N)
         Square of velocity dispersion for each species.
-    rmidmax : float
-        Maximum value for interpolated rmid
+    rmax : float, optional
+        Maximum shared midpoint radius. Nonpositive values use rmid.max().
+        A positive value rescales the output point count to int(N*rmax/rmid.max());
+        choose a value that leaves at least one point.
 
     Returns
     -------
-    rmid_shared : ndarray, shape (N,)
-    eta : ndarray, shape (N,)
+    rmid_shared : ndarray, shape (N_shared,)
+    eta : ndarray, shape (N_shared,)
     """
     s, N = rmid.shape
 
@@ -378,7 +385,12 @@ def calc_r_c_half_rho0(rmid, rho):
 @njit(float64(float64[:, :], float64[:, :], float64[:, :], types.int64,), cache=True,)
 def calc_r_c(rmid, rho, v2, core_def):
     """
-    Compute the core radius using the requested definition.
+    Return a dimensionless core radius for the selected definition.
+
+    rmid, rho, and v2 have shape (s, N). CORE_HALF_RHO0 finds the radius
+    where total density first falls to half its innermost value.
+    CORE_SPITZER87 uses sqrt(v20/rho0), with total innermost density and
+    density-weighted innermost v2. Other core_def values raise ValueError.
     """
     if core_def == CORE_HALF_RHO0:
 
@@ -401,6 +413,8 @@ def calc_v2_c(r_c, r, m, v2):
 
     Parameters
     ----------
+    r_c : float
+        Core radius in simulation units.
     r : (s, N+1)
         Shell-interface radii.
     m : (s, N+1)
@@ -517,43 +531,24 @@ def calc_core_species_quantities(r_c, r, m, v2):
 @njit(float64[:](float64[:], float64[:], float64[:]), fastmath=True, cache=True)
 def mass_fraction_radii(r_edges, m_edges, fracs):
     """
-    Compute radii at which a given set of mass fractions of the total enclosed mass are reached.
+    Interpolate radii enclosing sorted fractions of the final enclosed mass.
 
     Parameters
     ----------
-    r_edges : array_like, shape (N,)
-        Radii of the radial edges (grid points). Expected to be monotonic (typically increasing).
-    m_edges : array_like, shape (N,)
-        Cumulative (enclosed) mass evaluated at each radius in ``r_edges``.
-        The final element ``m_edges[-1]`` is interpreted as the total mass of the species.
-    fracs : array_like, shape (M,)
-        Mass fractions of the total mass at which the radius is requested (typically in [0, 1]).
-        Can be any real values; see Notes for behavior outside the nominal range.
+    r_edges, m_edges : ndarray, shape (N,)
+        Corresponding increasing radial edges and nondecreasing enclosed
+        masses. Supply equal-length arrays with at least two entries.
+    fracs : ndarray, shape (M,)
+        Fractions in nondecreasing order. The search only moves forward, so
+        unsorted fractions are not supported. Inputs are not validated.
 
     Returns
     -------
-    numpy.ndarray, shape (M,)
-        Array of radii corresponding to each requested mass fraction in ``fracs``.
-        If the total mass (``m_edges[-1]``) is <= 0, an array of NaNs with the same shape as ``fracs`` is returned.
-
-    Raises
-    ------
-    ValueError
-        If the input arrays have incompatible lengths or if ``m_edges`` and ``r_edges`` do not have at least two points.
-        (The implementation assumes at least two edges for meaningful interpolation.)
-
-    Notes
-    -----
-    - The function computes target enclosed masses as ``fracs * m_tot`` where ``m_tot = m_edges[-1]`` and finds the interval
-      in ``m_edges`` that brackets each target. It then linearly interpolates in radius between the two bracketing edges.
-    - The search advances monotonically through the mass-edge array for successive targets (amortized O(N + M) cost),
-      so performance is best when ``fracs`` are provided in non-decreasing order. The function still works for unsorted ``fracs``.
-    - The routine assumes ``m_edges`` is non-decreasing and corresponds to the same ordering as ``r_edges``. No internal sorting is performed.
-    - Behavior for targets outside the range of ``m_edges``:
-      - Targets >= total mass map to ``r_edges[-1]``.
-      - Targets less than the first edge mass are handled by linear interpolation using the first interval and may produce radii
-        smaller than ``r_edges[0]`` (i.e., backward extrapolation).
-    - Exact matches to an edge mass return the corresponding edge radius.
+    ndarray, shape (M,)
+        Radii found by linear interpolation in enclosed mass. Nonpositive
+        final mass yields NaNs. Targets above the final mass use the outer
+        radius; targets below the first mass extrapolate the first interval.
+        A flat mass interval uses its left radius.
 
     Examples
     --------
@@ -597,8 +592,8 @@ def calc_r50_spread(r, m, r50evo):
         Radii arrays per species
     m : array-like, shape (s, N+1)
         Mass arrays per species
-    s_k : array-like, shape (s, 2)
-        [k,0] is initial r_50 for species k and [k,1] is the the S_k value
+    r50evo : array-like, shape (s, 2)
+        [k,0] is initial r_50 for species k and [k,1] is the S_k value
 
     Returns
     -------

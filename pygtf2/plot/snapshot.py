@@ -104,6 +104,22 @@ def get_profile_axis_limits(profile, data_list, xaxis='r'):
 
     rho, m, and v2 include both the total-system and per-species curves.
     eta is a single global profile and is plotted on a linear y-axis.
+
+    Parameters
+    ----------
+    profile : {'rho', 'm', 'v2', 'eta'}
+        Profile whose curves determine the limits.
+    data_list : nonempty list of dict
+        Snapshot data from extract_snapshot_data, with consistent species.
+    xaxis : {'r', 'm'}, optional
+        Radius or total enclosed mass; default radius.
+
+    Returns
+    -------
+    tuple
+        ((xmin, xmax), (ymin, ymax)) in simulation units, padded across all
+        snapshots. Nonfinite values are excluded; logarithmic axes also
+        exclude nonpositive values.
     """
     _validate_profile(profile)
     if xaxis not in {'r', 'm'}:
@@ -181,7 +197,7 @@ def plot_profile(ax, profile, data_list, xaxis='r', axislims=None,
 
     Parameters
     ----------
-    ax : matplotlib Axis
+    ax : matplotlib.axes.Axes
         Axis object on which to plot.
     profile : {'rho', 'm', 'v2', 'eta'}
         Profile to plot. rho, m, and v2 show a solid total-system curve plus
@@ -319,24 +335,28 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', xaxis=None,
                    base_dir=None, filepath=None, show=False, grid=False,
                    for_movie=False):
     """
-    Plot up to three profiles at specified points in time for one simulation.
+    Plot saved radial profiles at selected snapshot indices for one simulation.
 
     Parameters
     ----------
     model : State object, Config object, or model_no
         Each model can be a State, Config, or integer model number.
     snapshots : int or list of int
-        Snapshot indices to plot.
+        Snapshot indices to plot; default [0]. Use -1 for the latest saved
+        snapshot. Entries equal to -1 in a supplied list are replaced in place.
     profiles : str or list of str, optional
         Profiles to plot. Options are 'rho', 'm', 'v2', 'eta'.
     xaxis : str or list of str, optional
-        X-axis for each profile. Options are 'r' and 'm'. Default is 'r'.
+        X-axis for each profile: 'r' or 'm'. None selects radius for all
+        panels. A string is accepted for one panel; otherwise supply one
+        entry per profile.
     base_dir : str, optional
         Required if model is passed as an integer.
     filepath : str, optional
         If provided, save the plot to this file.
     show : bool, optional
-        If True, show the plot even if saving.
+        If True, also display a saved plot. With no filepath, always display
+        the figure. Returns None; no figure or axes object is returned.
     grid : bool, optional
         If True, show grid on axes.
     for_movie : bool, optional
@@ -711,35 +731,11 @@ def _make_movie_parallel(
     fps=20,
 ):
     """
-    Animate profiles with constant scale and with inset for time evolution.
-    Scale stays constant throughout.
+    Render saved profiles with fixed axes and encode an MP4 using ffmpeg.
 
-    Arguments
-    ---------
-    model : State object, Config object, or model_no
-        Each model can be a State, Config, or integer model number.
-    profiles : list of str, optional
-        Profiles to plot. Options are 'rho', 'm', 'v2', 'eta'.
-    insets : list of str or None, optional
-        Inset plots to include. Options are global 1D quantities in time_evolution.txt.
-    xaxis : list of str, optional
-        X-axis for profiles to plot. Default is 'r'. Other option is 'm'.
-    add_radii : list, optional
-        List of radii to add to profiles from time_evolution.txt.
-        Options: 'r_c', 'r01', 'r05', 'r10', 'r20', 'r50', 'r90'.
-    filepath : str, optional
-        Save the plot to this file.
-    base_dir : str, optional
-        Required if model is passed as an integer.
-    grid : bool, optional
-        If True, shows grid on axes.
-    fps : int, optional
-        Frames per second for the output movie. Default is 20.
-
-    Returns
-    -------
-    None
-        Saves the movie as an MP4 file in the model directory.
+    Internal implementation of make_movie. Receives normalized lists of
+    profiles, inset fields, and x-axis choices from the public wrapper.
+    See make_movie for argument meanings and defaults. Returns None.
     """
 
     # Collect profiles and insets
@@ -1007,35 +1003,11 @@ def _make_movie_parallel(
 
 def _make_movie_serial(model, profiles=None, insets=None, xaxis=None, add_radii=None, filepath=None, base_dir=None, grid=False, fps=20,):
     """
-    Animate profiles wit constant scale and with inset for time evolution.
-    Scale stays constant throughout.
+    Render saved profiles with fixed axes and encode an MP4 using ffmpeg.
 
-    Arguments
-    ---------
-    model : State object, Config object, or model_no
-        Each model can be a State, Config, or integer model number.
-    profiles : list of str, optional
-        Profiles to plot. Options are 'rho', 'm', 'v2', 'eta'.
-    insets : list of str or None, optional
-        Inset plots to include. Options are global 1D quantities in time_evolution.txt.
-    xaxis : list of str, optional
-        X-axis for profiles to plot.  Default is 'r'.  Other option is 'm'.
-    add_radii : list, optional
-        List of radii to add to profiles from time_evolution.txt
-        Options: 'r_c', 'r01', 'r05', 'r10', 'r20', 'r50', 'r90'.
-    filepath : str, optional
-        Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie.mp4'
-    base_dir : str, optional
-        Required if any model is passed as an integer.  The directory in which all ModelXXXXX subdirectories reside.
-    grid : bool, optional
-        If True, shows grid on axes
-    fps : int, optional
-        Frames per second for the output movie. Default is 20
-
-    Returns
-    -------
-    None
-        Saves the movie as an MP4 file in the model directory.
+    Internal implementation of make_movie. Receives normalized lists of
+    profiles, inset fields, and x-axis choices from the public wrapper.
+    See make_movie for argument meanings and defaults. Returns None.
     """
     # Collect profiles and insets
     if profiles is None:

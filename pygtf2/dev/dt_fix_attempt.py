@@ -482,7 +482,7 @@ def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     b : ndarray, shape (N,)
         Main diagonal coefficients (multiply du_i) for interior nodes.
     c : ndarray, shape (N,)
-        Superdiagonal coefficients (multiply d_{u+1}) for interior nodes.
+        Superdiagonal coefficients (multiply du_{i+1}) for interior nodes.
     d : ndarray, shape (N,)
         Right-hand side vector for the interior nodes.
     rk : ndarray, shape (N+1,)
@@ -548,16 +548,12 @@ def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
       cache=True, fastmath=True)
 def conduct_implicit(v2, rho, r, m, c2, mrat, lnL, du_trial, dt) -> np.float64:
     """
-    Implicit intra-species conduction step on v2.
-    Use a fixed dt - no timestep limiting in this step - we find that the hex step limits in almost all cases.
+    Apply implicit intra-species conduction at the supplied fixed timestep.
 
-    For each species, solve a tridiagonal system for du, but only commit the
-    update once the limiter is satisfied.
-
-    The tridiagonal system is defined by:
-        a_i du_i-1 + b_i du_i + c_i du_i+1 = d_i
-    
-    v2 is updated in-place. u = 1.5 * v2
+    Solve a tridiagonal system for each species' specific-energy increment
+    and update v2 in place using u = 1.5*v2. This routine has no acceptance
+    limiter and returns None; any timestep rejection is the caller's job.
+    The supplied du_trial workspace is overwritten with the increments.
     """
     s, N = v2.shape
 
@@ -646,7 +642,7 @@ def conduction_split_step(v2, rho, r, m, c1, c2, mrat, lnL,
         Maximum realized fractional change from either operator.
         For hex this is max |dv2|/|v2|, and for conduction it is
         max |du|/|u|. These are equivalent fractional diagnostics
-        under your naming convention.
+        because u = 1.5*v2.
     dt_eff : float
         Effective shared timestep accepted for this split step.
         For Strang this is the full-step dt_eff, so each hex half-step

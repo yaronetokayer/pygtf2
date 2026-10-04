@@ -544,7 +544,7 @@ def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     b : ndarray, shape (N,)
         Main diagonal coefficients (multiply du_i) for interior nodes.
     c : ndarray, shape (N,)
-        Superdiagonal coefficients (multiply d_{u+1}) for interior nodes.
+        Superdiagonal coefficients (multiply du_{i+1}) for interior nodes.
     d : ndarray, shape (N,)
         Right-hand side vector for the interior nodes.
     rk : ndarray, shape (N+1,)
@@ -665,7 +665,7 @@ def build_tridiag_system_VEC(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     b : ndarray, shape (N,)
         Main diagonal coefficients (multiply du_i) for interior nodes.
     c : ndarray, shape (N,)
-        Superdiagonal coefficients (multiply d_{u+1}) for interior nodes.
+        Superdiagonal coefficients (multiply du_{i+1}) for interior nodes.
     d : ndarray, shape (N,)
         Right-hand side vector for the interior nodes.
     rk : ndarray, shape (N+1,)
@@ -732,16 +732,12 @@ def conduct_implicit(v2, rho, r, m,
                      a, b, c, d, 
                      c2, mrat, lnL, du_trial, dt,):
     """
-    Implicit intra-species conduction step on v2.
-    Use a fixed dt - no timestep limiting in this step - we find that the hex step limits in almost all cases.
+    Apply implicit intra-species conduction at the supplied fixed timestep.
 
-    For each species, solve a tridiagonal system for du, but only commit the
-    update once the limiter is satisfied.
-
-    The tridiagonal system is defined by:
-        a_i du_i-1 + b_i du_i + c_i du_i+1 = d_i
-    
-    v2 is updated in-place. u = 1.5 * v2
+    Solve a tridiagonal system for each species' specific-energy increment
+    and update v2 in place using u = 1.5*v2. This routine has no acceptance
+    limiter and returns None; any timestep rejection is the caller's job.
+    The supplied du_trial workspace is overwritten with the increments.
     """
     s, N = v2.shape
 
@@ -937,32 +933,14 @@ def conduct_imex_once(
     dt, order,
 ):
     """
-    Apply one split conduction step with a timestep limited by the net
-    fractional change across the complete IMEX step.
+    Apply one fixed-timestep split conduction update to v2 in place.
 
-    order:
-        HEX_FIRST -> hex(dt)      then cond(dt)
-        COND_FIRST -> cond(dt)     then hex(dt)
-        STRANG_SPLIT -> Strang:
-             hex(dt/2) -> cond(dt) -> hex(dt/2)
-    The trial is accepted when
-
-        max_{species, shell}
-            |v2_final - v2_initial|
-            / max(v2_initial, tiny)
-
-        <= eps_du
-
-    Returns
-    -------
-    du_max : float
-        Maximum net fractional change over the accepted full split step.
-    dt_used : float
-        Accepted trial timestep. On failure, this is the next reduced
-        timestep estimate.
-    du_iter : int
-        Zero-based iteration on which the step was accepted, or -1 if
-        no timestep was accepted after max_iter attempts.
+    HEX_FIRST applies explicit inter-species exchange followed by implicit
+    intra-species conduction; COND_FIRST reverses that order. STRANG_SPLIT
+    uses exchange(dt/2), conduction(dt), then exchange(dt/2).
+    The work arrays are overwritten. There is no timestep limiter or return
+    value; the caller must measure the change and accept or reject it.
+    An unrecognized order raises ValueError.
     """
     if order == HEX_FIRST:
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)

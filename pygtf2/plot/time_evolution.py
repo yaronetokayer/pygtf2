@@ -6,7 +6,7 @@ from pygtf2.io.read import extract_time_evolution_data
 
 def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepath=None, base_dir=None, show=False, grid=False):
     """
-    Plot any time-evolution quantity vs. time for one or more simulations.
+    Plot a supported saved time-history quantity against dimensionless time.
 
     Arguments
     ---------
@@ -15,7 +15,9 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
         If quantity is 'r_enc', only one model can be passed.
     quantity : {'rho_c', 'rho0', 'v2_c', 'r_c', 'eta_c', 'm_c', 'v20_tot', 'r_enc'}, optional
         What to plot on y-axis. For 'rho_c' and 'rho0', also plots
-        per-species curves. Default is 'rho_c'.
+        per-species curves. 'rho_c' is mean density within the core radius;
+        'rho0' is the innermost density. Default is 'rho_c'. Values use
+        simulation units. 'r_enc' shows enclosed-mass radii for one model.
     ylabel : str, optional
         Custom y-axis label. Defaults to quantity.
     logy : bool, optional
@@ -26,7 +28,8 @@ def plot_time_evolution(models, quantity='rho_c', ylabel=None, logy=True, filepa
         Required if any model is passed as an integer. The directory in which
         all ModelXXXXX subdirectories reside.
     show : bool, optional
-        If True, show the plot even if saving. Default is False.
+        If True, also display a saved plot. With no filepath, always display
+        the figure. Returns None; no figure or axes object is returned.
     grid : bool, optional
         If True, shows grid on axis.
     """
