@@ -168,3 +168,14 @@ tests/*
 
 # Experiments
 experiments/*
+
+# Local task checkpoints
+/handoff/
+
+# Keep the final published demo examples; ignore other generated runs.
+/examples/demo_output/Model*/
+!/examples/demo_output/Model00017/
+!/examples/demo_output/Model00018/
+!/examples/demo_output/Model00019/
+!/examples/demo_output/Model00020/
+!/examples/demo_output/Model00021/

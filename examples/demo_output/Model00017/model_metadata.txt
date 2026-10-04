@@ -1,0 +1,72 @@
+Model 00017 Metadata
+========================================
+
+    _mtot: 500000.0
+    grid:
+        _ngrid: 180
+        _rmax: 100.0
+        _rmin: 0.01
+    io:
+        _base_dir: /Users/yaronetokayer/Documents/codex_workspace/gtf/pygtf2/examples/demo_output
+        _chatter: True
+        _dr50_tevol: 0.1
+        _drho_prof: 0.1
+        _drho_tevol: 0.05
+        _model_no: 17
+        _nlog: 25000
+        _nupdate: 10000
+        _overwrite: True
+        _profiles: True
+        _t_evol: True
+    prec:
+        _eps_du: 0.0001
+        _epsabs: 1e-06
+        _epsrel: 1e-06
+        _max_iter_du: 50
+    sim:
+        _alpha: 1.217
+        _b: 0.44
+        _beta: 1.0
+        _binaries: False
+        _bkg:
+            length: None
+            mass: None
+            other: None
+            prof: None
+        _conduct_imex: True
+        _evap: False
+        _lnL_param: 0.11
+        _n_particle: 10000
+        _rho0_halt: 100000000.0
+        _t_halt: 1000.0
+    spec:
+        heavy:
+            _frac: 0.1
+            _init:
+                W0: None
+                Zt: None
+                alpha: 2.0
+                beta: 5.0
+                cvir: None
+                deltaP: None
+                gamma: 0.0
+                notices:
+                prof: abg
+                r_s: 0.0025
+                z: 0.0
+            _m_part: 2.0
+        light:
+            _frac: 0.9
+            _init:
+                W0: None
+                Zt: None
+                alpha: 2.0
+                beta: 5.0
+                cvir: None
+                deltaP: None
+                gamma: 0.0
+                notices:
+                prof: abg
+                r_s: 0.0025
+                z: 0.0
+            _m_part: 1.0
