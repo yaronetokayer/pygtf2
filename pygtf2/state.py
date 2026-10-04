@@ -792,25 +792,13 @@ class State:
         plot_snapshots(self, snapshots=snapshots, **kwargs)
         
     def make_movie(self, **kwargs):
-        """
-        Method to animate up to three profiles for the simulation represented by
-        the State object
+        """Animate this simulation with fixed axes and optional insets.
 
-        Arguments
-        ---------
-        filepath : str, optional
-            Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_{profiles}.mp4'
-        profiles : str or list of str, optional
-            Profiles to plot.  Options are 'rho', 'm', 'v2', 'eta', 'p', 'kn'
-        grid : bool, optional
-            If True, shows grid on axes
-        fps : int, optional
-            Frames per second for the output movie. Default is 20
-
-        Returns
-        -------
-        None
-            Saves the movie as an MP4 file in the model directory.
+        Accepts the keyword arguments of pygtf2.make_movie, including
+        parallel=False for serial rendering and insets=False for no insets.
+        Profiles are 'rho', 'm', 'v2', and 'eta'; the default is ['rho', 'v2'].
+        Output defaults to movie.mp4 in the model directory. Requires ffmpeg.
+        See help(pygtf2.make_movie) for all options.
         """
         from pygtf2.plot.snapshot import make_movie
 

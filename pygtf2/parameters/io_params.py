@@ -14,7 +14,7 @@ class IOParams:
     model_dir : str
         Subdirectory named 'ModelXXXXX', where XXXXX is zero-padded model number.
     nlog : int
-        Timesteps between logging output.
+        Timesteps between logging output (default 25,000).
     nupdate : int
         Timesteps between updating instantaneous timestep counter visual
     t_evol : bool
@@ -34,7 +34,7 @@ class IOParams:
     def __init__(self, 
                  model_no: int = None, 
                  base_dir: str = None, 
-                 nlog: int = 100000,
+                 nlog: int = 25_000,
                  nupdate: int = 1000,
                  t_evol : bool = True,
                  profiles : bool = True,

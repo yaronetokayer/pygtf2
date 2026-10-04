@@ -171,17 +171,17 @@ gtf.plot_snapshots(4, snapshots=[0, 50, 100], profiles=['rho', 'v2', 'kn'], base
 gtf.plot_snapshots(state, filepath='./initial_rho.png')
 ```
 
-The `make_movie()` function generates animations of up to three profiles in separate panels for a simulation.  Like `plot_time_evolution()`, the State object, Config object, or model number can used to specify the simulation you wish to plot.  Only the snapshots of the most recent run for the simulation model_no will be included, even if profiles with higher indices are in the directory from previous simulation runs.  You can check the current version of the `snapshot_conversion.txt` file for all snapshots that will be included in the animation
+The `make_movie()` function animates up to three profiles with fixed axis limits over the full saved evolution. It accepts a State, Config, or integer model number (with `base_dir`). Rendering is parallel by default; `parallel=False` selects serial rendering. Requires `ffmpeg`.
 
 ```python
-import pygtfcode as gtf
+import pygtf2 as gtf
 
-# Plot the density profile
-gtf.make_movie(state)
-
-# All keyword arguments available in plot_snapshots function, other than 'snapshots', can be used here
-gtf.make_movie(2, base_dir='./', profiles=['v2', 'p'], grid=True)
+gtf.make_movie(state, profiles=['rho', 'v2'], insets=['rho_c_tot', 'eta_c'])
+gtf.make_movie(state, profiles=['rho', 'eta'], insets=False, parallel=False)
+state.make_movie(profiles=['rho', 'v2'], add_radii=['r_c'])
 ```
+
+`insets=None` (the default) shows core density in the first panel. `insets=False` disables all insets; lists containing `None` disable individual panels. `time_evolution.txt` is needed only when using insets or marked radii. `xaxis='m'` uses total enclosed mass for every panel; a list selects the coordinate per panel. The default output is `movie.mp4` in the model directory; override it with `filepath`.
 
 The plotting functions also exist as methods to the `State` object:
 
@@ -198,7 +198,7 @@ state.plot_snapshots()              # Defaults to the latest state
 state.plot_snapshots(snapshots=0, filename="./initial_profs.png")   # Plot and save initial profiles
 # Note that while the standalone function defaults to the initial profile, the `State` method defaults to the current state.
 
-state.make_movie(profiles=['rho', 'kn', 'v2'])
+state.make_movie(profiles=['rho', 'eta', 'v2'], insets=False)
 ```
 
 ---

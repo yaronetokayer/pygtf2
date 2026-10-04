@@ -164,6 +164,7 @@ cython_debug/
 
 # Test files
 tests/*
+!tests/test_movie.py
 
 # Experiments
 experiments/*

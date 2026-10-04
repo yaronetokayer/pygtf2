@@ -83,7 +83,7 @@ def _profile_y_values(data, profile, species=None):
 
 
 def _valid_time_insets(time_data):
-    """Top-level 1D time-series fields suitable for deluxe movie insets."""
+    """Top-level 1D time-series fields suitable for movie insets."""
     if 'time' not in time_data:
         return []
 
@@ -435,108 +435,7 @@ def plot_snapshots(model, snapshots=[0], profiles='rho', xaxis=None,
         plt.show()
 
 
-def make_movie(model, filepath=None, base_dir=None, profiles='rho', grid=False, fps=20):
-    """
-    Animate up to three profiles for one simulation
-
-    Arguments
-    ---------
-    model : State object, Config object, or model_no
-        Each model can be a State, Config, or integer model number.
-    filepath : str, optional
-        Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_{profiles}.mp4'
-    base_dir : str, optional
-        Required if any model is passed as an integer.  The directory in which all ModelXXXXX subdirectories reside.
-    profiles : str or list of str, optional
-        Profiles to plot. Options are 'rho', 'm', 'v2', 'eta'
-    grid : bool, optional
-        If True, shows grid on axes
-    fps : int, optional
-        Frames per second for the output movie. Default is 20
-
-    Returns
-    -------
-    None
-        Saves the movie as an MP4 file in the model directory.
-    """
-
-    # Get the model directory
-    if hasattr(model, 'config'):        # Passed state object
-        model_dir = os.path.join(model.config.io.base_dir, model.config.io.model_dir)
-    elif hasattr(model, 'io'):          # Passed config object
-        model_dir = os.path.join(model.io.base_dir, model.io.model_dir)
-    elif isinstance(model, int):        # Passed model number
-        if base_dir is None:
-            raise ValueError("'base_dir' (base directory) must be specified if using model numbers.")
-        model_dir = f"Model{model:05d}"
-        model_dir = os.path.join(base_dir, model_dir)
-    else:
-        raise TypeError(f"Unrecognized model type: {type(model)}. Must be a State object, Config object, or integer.")
-    
-    # Load snapshot indices
-    snapshot_indices_data = extract_snapshot_indices(model_dir)
-    indices = snapshot_indices_data['index']
-
-    # Create a temporary directory for storing images
-    temp_dir = os.path.join(model_dir, "temp_images")
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)         # Delete the directory and all its contents
-    os.makedirs(temp_dir)
-
-    image_paths = []                    # List to store paths of generated images
-
-    print(f"Generating {len(indices)} frames...")
-    for ind in tqdm(indices, desc="Frames", unit="frame"):
-        snapshot_path = os.path.join(model_dir, f"profile_{ind}.dat")
-        if not os.path.isfile(snapshot_path):
-            continue                    # Skip if the snapshot file does not exist
-
-        # Define the output image path for the current frame
-        image_path = os.path.join(temp_dir, f"frame_{ind:04d}.png")
-
-        # Plot the profile, including the initial profile for comparison
-        if ind == 0:
-            plot_snapshots(model, profiles=profiles, base_dir=base_dir, filepath=image_path, grid=grid, for_movie=True)
-        else:
-            plot_snapshots(model, snapshots=[0,ind], profiles=profiles, base_dir=base_dir, filepath=image_path, grid=grid, for_movie=True)
-
-        image_paths.append(image_path)  # Add the image path to the list
-
-    print("Compiling into a movie using ffmpeg...")
-    # Define the output movie path
-    if isinstance(profiles, (list, tuple)):
-        profiles_str = "_".join(map(str, profiles))
-    else:
-        profiles_str = str(profiles)
-
-    output_movie_path = (
-        filepath if filepath is not None 
-        else os.path.join(model_dir, f"movie_{profiles_str}.mp4")
-    )
-
-    # Construct the ffmpeg command to create the movie
-    movie_command = [
-        "ffmpeg",
-        "-y",                                           # Overwrite output file if it exists
-        "-framerate", str(fps),                         # Set frames per second
-        "-i", os.path.join(temp_dir, "frame_%04d.png"), # Input image sequence
-        "-c:v", "libx264",                              # Use H.264 codec
-        "-pix_fmt", "yuv420p",                          # Set pixel format for compatibility
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",     # Ensure even dimensions
-        output_movie_path
-    ]
-
-    # Run the ffmpeg command
-    subprocess.run(movie_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, check=True)
-
-    print("Deleting frames...")
-    # Clean up temporary images
-    shutil.rmtree(temp_dir, ignore_errors=True)
-
-    # Print the location of the saved movie
-    print(f"Movie saved to {output_movie_path}")
-
-def _deluxe_frame(args):
+def _movie_frame(args):
     """
     Worker function for rendering one movie frame.
 
@@ -800,7 +699,7 @@ def _deluxe_frame(args):
 
     return image_path
 
-def make_movie_deluxe_parallel(
+def _make_movie_parallel(
     model,
     profiles=None,
     insets=None,
@@ -926,19 +825,14 @@ def make_movie_deluxe_parallel(
             "Must be a State object, Config object, or integer."
         )
 
-    # Load time evolution data
-    print("Getting time evolution data...")
-
-    time_evolution_path = os.path.join(
-        model_dir,
-        "time_evolution.txt",
-    )
-
-    time_data = extract_time_evolution_data(
-        time_evolution_path
-    )
-
-    tevo_t = time_data["time"]
+    time_data = {}
+    tevo_t = np.array([])
+    if any(inset is not None for inset in insets) or add_radii:
+        print("Getting time evolution data...")
+        time_data = extract_time_evolution_data(
+            os.path.join(model_dir, "time_evolution.txt")
+        )
+        tevo_t = time_data["time"]
 
     # Validate insets
     valid_insets = _valid_time_insets(time_data)
@@ -1009,7 +903,7 @@ def make_movie_deluxe_parallel(
     # Determine number of parallel processes
     max_workers = max(
         1,
-        min(os.cpu_count() - 2, 7),
+        min((os.cpu_count() or 1) - 2, 7),
     )
 
     print(
@@ -1041,7 +935,7 @@ def make_movie_deluxe_parallel(
 
         futures = [
             executor.submit(
-                _deluxe_frame,
+                _movie_frame,
                 args,
             )
             for args in frame_args
@@ -1070,7 +964,7 @@ def make_movie_deluxe_parallel(
     else:
         output_movie_path = os.path.join(
             model_dir,
-            "movie_deluxe.mp4",
+            "movie.mp4",
         )
 
     # Construct the ffmpeg command
@@ -1111,7 +1005,7 @@ def make_movie_deluxe_parallel(
         f"Movie saved to {output_movie_path}"
     )
 
-def make_movie_deluxe_serial(model, profiles=None, insets=None, xaxis=None, add_radii=None, filepath=None, base_dir=None, grid=False, fps=20,):
+def _make_movie_serial(model, profiles=None, insets=None, xaxis=None, add_radii=None, filepath=None, base_dir=None, grid=False, fps=20,):
     """
     Animate profiles wit constant scale and with inset for time evolution.
     Scale stays constant throughout.
@@ -1130,7 +1024,7 @@ def make_movie_deluxe_serial(model, profiles=None, insets=None, xaxis=None, add_
         List of radii to add to profiles from time_evolution.txt
         Options: 'r_c', 'r01', 'r05', 'r10', 'r20', 'r50', 'r90'.
     filepath : str, optional
-        Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_deluxe.mp4'
+        Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie.mp4'
     base_dir : str, optional
         Required if any model is passed as an integer.  The directory in which all ModelXXXXX subdirectories reside.
     grid : bool, optional
@@ -1193,11 +1087,14 @@ def make_movie_deluxe_serial(model, profiles=None, insets=None, xaxis=None, add_
     else:
         raise TypeError(f"Unrecognized model type: {type(model)}. Must be a State object, Config object, or integer.")
     
-    # Load time evolution data
-    print(f"Getting time evolution data...")
-    time_evolution_path = os.path.join(model_dir, f"time_evolution.txt")
-    time_data = extract_time_evolution_data(time_evolution_path)
-    tevo_t = time_data['time']
+    time_data = {}
+    tevo_t = np.array([])
+    if any(inset is not None for inset in insets) or add_radii:
+        print("Getting time evolution data...")
+        time_data = extract_time_evolution_data(
+            os.path.join(model_dir, "time_evolution.txt")
+        )
+        tevo_t = time_data["time"]
 
     # Validate insets
     valid_insets = _valid_time_insets(time_data)
@@ -1339,7 +1236,7 @@ def make_movie_deluxe_serial(model, profiles=None, insets=None, xaxis=None, add_
     if filepath is not None:
         output_movie_path = filepath
     else:
-        output_movie_path = os.path.join(model_dir, f"movie_deluxe.mp4")
+        output_movie_path = os.path.join(model_dir, f"movie.mp4")
 
     # Construct the ffmpeg command to create the movie
     movie_command = [
@@ -1363,15 +1260,57 @@ def make_movie_deluxe_serial(model, profiles=None, insets=None, xaxis=None, add_
     # Print the location of the saved movie
     print(f"Movie saved to {output_movie_path}")
 
-def make_movie_deluxe(model, parallel=True, **kwargs):
+def make_movie(model, parallel=True, *, profiles=None, insets=None, xaxis=None,
+               add_radii=None, filepath=None, base_dir=None, grid=False, fps=20):
+    """Animate saved profiles with fixed axes across the entire evolution.
+
+    Parameters
+    ----------
+    model : State, Config, or int
+        Simulation to animate. Integer model numbers require base_dir.
+    parallel : bool, optional
+        Render frames in separate processes (default True). Set False for
+        serial rendering, including environments without multiprocessing.
+    profiles : str or list of str, optional
+        Up to three of 'rho', 'm', 'v2', 'eta'. Defaults to ['rho', 'v2'].
+    insets : None, False, str, or list of str or None, optional
+        None uses 'rho_c_tot' in the first panel. False disables all insets.
+        Otherwise provide one time_evolution.txt column per panel, with None
+        for panels without insets. A string is accepted for a single panel.
+    xaxis : str or list of str, optional
+        'r' or 'm' for each panel. Defaults to radius for all panels.
+    add_radii : str or list of str, optional
+        Mark 'r_c', 'r01', 'r05', 'r10', 'r20', 'r50', or 'r90'.
+    filepath : str, optional
+        Output path. Defaults to movie.mp4 in the model directory.
+    base_dir : str, optional
+        Directory containing ModelXXXXX folders; required for integer models.
+    grid : bool, optional
+        Show grid lines. Defaults to False.
+    fps : int, optional
+        Frames per second. Defaults to 20.
+
+    Notes
+    -----
+    Requires ffmpeg. time_evolution.txt is needed only for insets or marked
+    radii. Serial and parallel rendering use the same fixed axis limits.
     """
-    Top-level function for calling make_movie_deluxe,
-    either serial or parallel.
-    """
-    if parallel:
-        make_movie_deluxe_parallel(model, **kwargs)
-    else:
-        make_movie_deluxe_serial(model, **kwargs)
+    if profiles is None:
+        profiles = ['rho', 'v2']
+    elif isinstance(profiles, str):
+        profiles = [profiles]
+    if not 1 <= len(profiles) <= 3:
+        raise ValueError("Specify between one and three profiles.")
+    if insets is False:
+        insets = [None] * len(profiles)
+    elif insets is True:
+        raise ValueError("Use insets=None for default insets or False to disable them.")
+    if isinstance(xaxis, str):
+        xaxis = [xaxis] * len(profiles)
+    renderer = _make_movie_parallel if parallel else _make_movie_serial
+    return renderer(model, profiles=profiles, insets=insets, xaxis=xaxis,
+                    add_radii=add_radii, filepath=filepath, base_dir=base_dir,
+                    grid=grid, fps=fps)
 
 # import os
 # import numpy as np
@@ -1671,950 +1610,3 @@ def make_movie_deluxe(model, parallel=True, **kwargs):
 #             plt.close(fig)
 #     else:
 #         plt.show()
-
-# def make_movie(model, filepath=None, base_dir=None, profiles='rho', grid=False, fps=20):
-#     """
-#     Animate up to three profiles for one simulation
-
-#     Arguments
-#     ---------
-#     model : State object, Config object, or model_no
-#         Each model can be a State, Config, or integer model number.
-#     filepath : str, optional
-#         Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_{profiles}.mp4'
-#     base_dir : str, optional
-#         Required if any model is passed as an integer.  The directory in which all ModelXXXXX subdirectories reside.
-#     profiles : str or list of str, optional
-#         Profiles to plot.  Options are 'rho', 'm', 'v2', 'p', 'trelax', 'kn'
-#     grid : bool, optional
-#         If True, shows grid on axes
-#     fps : int, optional
-#         Frames per second for the output movie. Default is 20
-
-#     Returns
-#     -------
-#     None
-#         Saves the movie as an MP4 file in the model directory.
-#     """
-
-#     n = 1 if type(profiles) != list else len(profiles) # number of panels
-
-#     # Get the model directory
-#     if hasattr(model, 'config'):        # Passed state object
-#         model_dir = os.path.join(model.config.io.base_dir, model.config.io.model_dir)
-#     elif hasattr(model, 'io'):          # Passed config object
-#         model_dir = os.path.join(model.io.base_dir, model.io.model_dir)
-#     elif isinstance(model, int):        # Passed model number
-#         if base_dir is None:
-#             raise ValueError("'base_dir' (base directory) must be specified if using model numbers.")
-#         model_dir = f"Model{model:05d}"
-#         model_dir = os.path.join(base_dir, model_dir)
-#     else:
-#         raise TypeError(f"Unrecognized model type: {type(model)}. Must be a State object, Config object, or integer.")
-    
-#     # Load snapshot indices
-#     snapshot_indices_data = extract_snapshot_indices(model_dir)
-#     indices = snapshot_indices_data['snapshot_index']
-
-#     # Create a temporary directory for storing images
-#     temp_dir = os.path.join(model_dir, "temp_images")
-#     if os.path.exists(temp_dir):
-#         shutil.rmtree(temp_dir)         # Delete the directory and all its contents
-#     os.makedirs(temp_dir)
-
-#     image_paths = []                    # List to store paths of generated images
-
-#     print(f"Generating {len(indices)} frames...")
-#     for ind in tqdm(indices, desc="Frames", unit="frame"):
-#         snapshot_path = os.path.join(model_dir, f"profile_{ind}.dat")
-#         if not os.path.isfile(snapshot_path):
-#             continue                    # Skip if the snapshot file does not exist
-
-#         # Define the output image path for the current frame
-#         image_path = os.path.join(temp_dir, f"frame_{ind:04d}.png")
-
-#         # Plot the profile, including the initial profile for comparison
-#         if ind == 0:
-#             plot_snapshots(model, profiles=profiles, base_dir=base_dir, filepath=image_path, grid=grid, for_movie=True)
-#         else:
-#             plot_snapshots(model, snapshots=[0,ind], profiles=profiles, base_dir=base_dir, filepath=image_path, grid=grid, for_movie=True)
-
-#         image_paths.append(image_path)  # Add the image path to the list
-
-#     print("Compiling into a movie using ffmpeg...")
-#     # Define the output movie path
-#     if isinstance(profiles, (list, tuple)):
-#         profiles_str = "_".join(map(str, profiles))
-#     else:
-#         profiles_str = str(profiles)
-
-#     output_movie_path = (
-#         filepath if filepath is not None 
-#         else os.path.join(model_dir, f"movie_{profiles_str}.mp4")
-#     )
-
-#     # Construct the ffmpeg command to create the movie
-#     movie_command = [
-#         "ffmpeg",
-#         "-y",                                           # Overwrite output file if it exists
-#         "-framerate", str(fps),                         # Set frames per second
-#         "-i", os.path.join(temp_dir, "frame_%04d.png"), # Input image sequence
-#         "-c:v", "libx264",                              # Use H.264 codec
-#         "-pix_fmt", "yuv420p",                          # Set pixel format for compatibility
-#         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",     # Ensure even dimensions
-#         output_movie_path
-#     ]
-
-#     # Run the ffmpeg command
-#     subprocess.run(movie_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, check=True)
-
-#     print("Deleting frames...")
-#     # Clean up temporary images
-#     shutil.rmtree(temp_dir, ignore_errors=True)
-
-#     # Print the location of the saved movie
-#     print(f"Movie saved to {output_movie_path}")
-
-# def _deluxe_frame(args):
-#     """
-#     Worker function for rendering one movie frame.
-
-#     Must be top-level so ProcessPoolExecutor can pickle it.
-#     """
-#     (
-#         ind, model_dir, temp_dir, n, profiles, insets, xaxis, add_radii,
-#         axislims, grid, index_t, tevo_t, time_data,
-#     ) = args
-
-#     import os
-#     import numpy as np
-
-#     # Safer for multiprocessing / headless rendering.
-#     import matplotlib
-#     matplotlib.use("Agg", force=True)
-#     import matplotlib.pyplot as plt
-#     from matplotlib import transforms
-
-#     snapshot_path = os.path.join(model_dir, f"profile_{ind}.dat")
-#     if not os.path.isfile(snapshot_path):
-#         return None
-
-#     image_path = os.path.join(temp_dir, f"frame_{ind:04d}.png")
-
-#     # Extract data for current frame and initial frame
-#     initial_snapshot_path = os.path.join(model_dir, "profile_0.dat")
-#     data_list = [
-#         extract_snapshot_data(initial_snapshot_path),
-#         extract_snapshot_data(snapshot_path),
-#     ]
-
-#     # Plot profile and initial profile
-#     fig, axs = plt.subplots(1, n, figsize=(6 * n, 5))
-#     axs = np.atleast_1d(axs)
-
-#     for i, ax in enumerate(axs):
-#         profile = profiles[i]
-#         inset = insets[i]
-#         xax = xaxis[i]
-
-#         legend = True if i == 0 else False
-
-#         plot_profile(
-#             ax,
-#             profile,
-#             data_list,
-#             xaxis=xax,
-#             axislims=axislims[profile],
-#             legend=legend,
-#             grid=grid,
-#             for_movie=True,
-#         )
-
-#         if add_radii is not None:
-#             frac_up = 0.15
-
-#             for radius in add_radii:
-
-#                 # One radius per species
-#                 if radius in ["r01", "r05", "r10", "r20", "r50", "r90"]:
-
-#                     for spec in time_data["species"]:
-#                         r = np.interp(
-#                             index_t[ind],
-#                             tevo_t,
-#                             time_data["species"][spec][radius],
-#                         )
-
-#                         if xax == "r":
-
-#                             # If r is outside the x-axis limits, skip plotting
-#                             if (
-#                                 r < axislims[profile][0][0]
-#                                 or r > axislims[profile][0][1]
-#                             ):
-#                                 continue
-
-#                             ax.axvline(
-#                                 r,
-#                                 color="red",
-#                                 ls="--",
-#                                 zorder=-10,
-#                             )
-
-#                             trans = transforms.blended_transform_factory(
-#                                 ax.transData,
-#                                 ax.transAxes,
-#                             )
-
-#                             ax.text(
-#                                 r,
-#                                 frac_up,
-#                                 f"{radius}[{spec}]",
-#                                 rotation=90,
-#                                 color="red",
-#                                 fontsize=10,
-#                                 ha="right",
-#                                 va="bottom",
-#                                 zorder=-10,
-#                                 transform=trans,
-#                             )
-
-#                         elif xax == "m":
-
-#                             m = np.interp(
-#                                 r,
-#                                 10 ** data_list[1]["log_r"],
-#                                 data_list[1]["m_tot"],
-#                             )
-
-#                             # If m is outside the x-axis limits, skip plotting
-#                             if (
-#                                 m < axislims[profile][0][0]
-#                                 or m > axislims[profile][0][1]
-#                             ):
-#                                 continue
-
-#                             ax.axvline(
-#                                 m,
-#                                 color="red",
-#                                 ls="--",
-#                                 zorder=-10,
-#                             )
-
-#                             trans = transforms.blended_transform_factory(
-#                                 ax.transData,
-#                                 ax.transAxes,
-#                             )
-
-#                             ax.text(
-#                                 m,
-#                                 frac_up,
-#                                 f"{radius}[{spec}]",
-#                                 rotation=90,
-#                                 color="red",
-#                                 fontsize=10,
-#                                 ha="right",
-#                                 va="bottom",
-#                                 zorder=-10,
-#                                 transform=trans,
-#                             )
-
-#                 else:
-
-#                     r = np.interp(
-#                         index_t[ind],
-#                         tevo_t,
-#                         time_data[radius],
-#                     )
-
-#                     if xax == "r":
-
-#                         # If r is outside the x-axis limits, skip plotting
-#                         if (
-#                             r < axislims[profile][0][0]
-#                             or r > axislims[profile][0][1]
-#                         ):
-#                             continue
-
-#                         ax.axvline(
-#                             r,
-#                             color="red",
-#                             ls="--",
-#                             zorder=-10,
-#                         )
-
-#                         trans = transforms.blended_transform_factory(
-#                             ax.transData,
-#                             ax.transAxes,
-#                         )
-
-#                         ax.text(
-#                             r,
-#                             frac_up,
-#                             radius,
-#                             rotation=90,
-#                             color="red",
-#                             fontsize=10,
-#                             ha="right",
-#                             va="bottom",
-#                             zorder=-10,
-#                             transform=trans,
-#                         )
-
-#                     elif xax == "m":
-
-#                         m = np.interp(
-#                             r,
-#                             10 ** data_list[1]["log_r"],
-#                             data_list[1]["m"],
-#                         )
-
-#                         # If m is outside the x-axis limits, skip plotting
-#                         if (
-#                             m < axislims[profile][0][0]
-#                             or m > axislims[profile][0][1]
-#                         ):
-#                             continue
-
-#                         ax.axvline(
-#                             m,
-#                             color="red",
-#                             ls="--",
-#                             zorder=-10,
-#                         )
-
-#                         trans = transforms.blended_transform_factory(
-#                             ax.transData,
-#                             ax.transAxes,
-#                         )
-
-#                         ax.text(
-#                             m,
-#                             frac_up,
-#                             radius,
-#                             rotation=90,
-#                             color="red",
-#                             fontsize=10,
-#                             ha="right",
-#                             va="bottom",
-#                             zorder=-10,
-#                             transform=trans,
-#                         )
-
-#         if inset is not None:
-#             tevo_y = time_data[inset]
-
-#             if profile != "trelax":
-#                 axin = ax.inset_axes([0.55, 0.65, 0.45, 0.35])
-#             else:
-#                 axin = ax.inset_axes([0.0, 0.65, 0.45, 0.35])
-
-#             axin.axvline(index_t[ind], color="grey")
-#             axin.plot(tevo_t, tevo_y, color="black")
-
-#             axin.scatter(
-#                 index_t[ind],
-#                 np.interp(index_t[ind], tevo_t, tevo_y),
-#                 color="red",
-#                 s=50,
-#             )
-
-#             axin.set_ylabel(inset, fontsize=12)
-#             axin.set_xlabel("$t$", fontsize=12)
-#             axin.set_yscale("log")
-
-#             axin.tick_params(
-#                 axis="both",
-#                 which="both",
-#                 labelbottom=False,
-#                 labelleft=False,
-#                 labeltop=False,
-#                 labelright=False,
-#                 top=True,
-#                 bottom=True,
-#                 left=True,
-#                 right=True,
-#                 direction="in",
-#             )
-
-#     fig.savefig(
-#         image_path,
-#         dpi=300,
-#         bbox_inches="tight",
-#     )
-
-#     plt.close(fig)
-
-#     return image_path
-
-# def make_movie_deluxe_parallel(
-#     model,
-#     profiles=None,
-#     insets=None,
-#     xaxis=None,
-#     add_radii=None,
-#     filepath=None,
-#     base_dir=None,
-#     grid=False,
-#     fps=20,
-# ):
-#     """
-#     Animate profiles with constant scale and with inset for time evolution.
-#     Scale stays constant throughout.
-
-#     Arguments
-#     ---------
-#     model : State object, Config object, or model_no
-#         Each model can be a State, Config, or integer model number.
-#     profiles : list of str, optional
-#         Profiles to plot. Options are 'rho', 'm', 'v2', 'trelax', 'eta'.
-#     insets : list of str or None, optional
-#         Inset plots to include. Options are any quantity in time_evolution.txt.
-#     xaxis : list of str, optional
-#         X-axis for profiles to plot. Default is 'r'. Other option is 'm'.
-#     add_radii : list, optional
-#         List of radii to add to profiles from time_evolution.txt.
-#         Options: 'r_c', 'r01', 'r05', 'r10', 'r20', 'r50', 'r90'.
-#     filepath : str, optional
-#         Save the plot to this file.
-#     base_dir : str, optional
-#         Required if model is passed as an integer.
-#     grid : bool, optional
-#         If True, shows grid on axes.
-#     fps : int, optional
-#         Frames per second for the output movie. Default is 20.
-
-#     Returns
-#     -------
-#     None
-#         Saves the movie as an MP4 file in the model directory.
-#     """
-
-#     # Collect profiles and insets
-#     if profiles is None:
-#         profiles = ["rho", "v2"]
-#     elif isinstance(profiles, str):
-#         profiles = [profiles]
-
-#     if insets is None:
-#         insets = ["rho_c_tot"] + [None] * (len(profiles) - 1)
-#     elif isinstance(insets, str) or insets is None:
-#         insets = [insets]
-
-#     if xaxis is None:
-#         xaxis = ["r"] * len(profiles)
-#     elif isinstance(xaxis, str):
-#         xaxis = [xaxis]
-
-#     # Validate profiles
-#     valid_profiles = ["rho", "m", "v2", "trelax", "eta"]
-
-#     if any(profile not in valid_profiles for profile in profiles):
-#         raise ValueError(
-#             f"Invalid profile specified. Valid options are: {valid_profiles}"
-#         )
-
-#     # Validate radii
-#     valid_radii = ["r_c", "r01", "r05", "r10", "r20", "r50", "r90"]
-
-#     if add_radii is not None:
-
-#         if isinstance(add_radii, str):
-#             add_radii = [add_radii]
-
-#         if any(radius not in valid_radii for radius in add_radii):
-#             raise ValueError(
-#                 f"Invalid radius specified. Valid options are: {valid_radii}"
-#             )
-
-#     # Validate xaxis
-#     valid_xaxis = ["r", "m"]
-
-#     if any(x not in valid_xaxis for x in xaxis):
-#         raise ValueError(
-#             f"Invalid x-axis specified. Valid options are: {valid_xaxis}"
-#         )
-
-#     # Number of panels
-#     n = len(profiles)
-
-#     # Get the model directory
-#     if hasattr(model, "config"):              # Passed state object
-
-#         model_dir = os.path.join(
-#             model.config.io.base_dir,
-#             model.config.io.model_dir,
-#         )
-
-#     elif hasattr(model, "io"):                # Passed config object
-
-#         model_dir = os.path.join(
-#             model.io.base_dir,
-#             model.io.model_dir,
-#         )
-
-#     elif isinstance(model, int):              # Passed model number
-
-#         if base_dir is None:
-#             raise ValueError(
-#                 "'base_dir' (base directory) must be specified "
-#                 "if using model numbers."
-#             )
-
-#         model_dir = f"Model{model:05d}"
-#         model_dir = os.path.join(base_dir, model_dir)
-
-#     else:
-
-#         raise TypeError(
-#             f"Unrecognized model type: {type(model)}. "
-#             "Must be a State object, Config object, or integer."
-#         )
-
-#     # Load time evolution data
-#     print("Getting time evolution data...")
-
-#     time_evolution_path = os.path.join(
-#         model_dir,
-#         "time_evolution.txt",
-#     )
-
-#     time_data = extract_time_evolution_data(
-#         time_evolution_path
-#     )
-
-#     tevo_t = time_data["time"]
-
-#     # Validate insets
-#     valid_insets = list(time_data.keys())
-
-#     if any(
-#         inset not in valid_insets
-#         for inset in insets
-#         if inset is not None
-#     ):
-#         raise ValueError(
-#             f"Invalid inset specified. Valid options are: {valid_insets}"
-#         )
-
-#     if len(insets) != len(profiles):
-#         raise ValueError(
-#             "'insets' must have the same length as 'profiles'."
-#         )
-
-#     # Load snapshot indices
-#     snapshot_indices_data = extract_snapshot_indices(model_dir)
-
-#     indices = snapshot_indices_data["index"]
-#     index_t = snapshot_indices_data["time"]
-
-#     # Get axis limits
-#     print("Getting axis limits...")
-
-#     snapshot_data_list = []
-
-#     for ind in indices:
-
-#         snapshot_path = os.path.join(
-#             model_dir,
-#             f"profile_{ind}.dat",
-#         )
-
-#         if not os.path.isfile(snapshot_path):
-#             continue
-
-#         snapshot_data_list.append(
-#             extract_snapshot_data(snapshot_path)
-#         )
-
-#     axislims = {}
-
-#     for i, profile in enumerate(profiles):
-
-#         xlim, ylim = get_profile_axis_limits(
-#             profile,
-#             snapshot_data_list,
-#             xaxis=xaxis[i],
-#         )
-
-#         axislims[profile] = (xlim, ylim)
-
-#     # Create a temporary directory for storing images
-#     temp_dir = os.path.join(
-#         model_dir,
-#         "temp_images",
-#     )
-
-#     if os.path.exists(temp_dir):
-#         shutil.rmtree(temp_dir)
-
-#     os.makedirs(temp_dir)
-
-#     image_paths = []
-
-#     # Determine number of parallel processes
-#     max_workers = max(
-#         1,
-#         min(os.cpu_count() - 2, 7),
-#     )
-
-#     print(
-#         f"Generating {len(indices)} frames using "
-#         f"{max_workers} parallel processes..."
-#     )
-
-#     frame_args = [
-#         (
-#             ind,
-#             model_dir,
-#             temp_dir,
-#             n,
-#             profiles,
-#             insets,
-#             xaxis,
-#             add_radii,
-#             axislims,
-#             grid,
-#             index_t,
-#             tevo_t,
-#             time_data,
-#         )
-#         for ind in indices
-#     ]
-
-#     with ProcessPoolExecutor(
-#         max_workers=max_workers
-#     ) as executor:
-
-#         futures = [
-#             executor.submit(
-#                 _deluxe_frame,
-#                 args,
-#             )
-#             for args in frame_args
-#         ]
-
-#         for future in tqdm(
-#             as_completed(futures),
-#             total=len(futures),
-#             desc="Frames",
-#             unit="frame",
-#         ):
-
-#             image_path = future.result()
-
-#             if image_path is not None:
-#                 image_paths.append(image_path)
-
-#     # Keep list deterministic
-#     # (although we never end up using it)
-#     image_paths.sort()
-
-#     print("Compiling into a movie using ffmpeg...")
-
-#     if filepath is not None:
-#         output_movie_path = filepath
-#     else:
-#         output_movie_path = os.path.join(
-#             model_dir,
-#             "movie_deluxe.mp4",
-#         )
-
-#     # Construct the ffmpeg command
-#     movie_command = [
-#         "ffmpeg",
-#         "-y",
-#         "-framerate",
-#         str(fps),
-#         "-i",
-#         os.path.join(
-#             temp_dir,
-#             "frame_%04d.png",
-#         ),
-#         "-c:v",
-#         "libx264",
-#         "-pix_fmt",
-#         "yuv420p",
-#         "-vf",
-#         "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-#         output_movie_path,
-#     ]
-
-#     subprocess.run(
-#         movie_command,
-#         stdout=subprocess.DEVNULL,
-#         stderr=subprocess.STDOUT,
-#         check=True,
-#     )
-
-#     print("Deleting frames...")
-
-#     shutil.rmtree(
-#         temp_dir,
-#         ignore_errors=True,
-#     )
-
-#     print(
-#         f"Movie saved to {output_movie_path}"
-#     )
-
-# def make_movie_deluxe_serial(model, profiles=None, insets=None, xaxis=None, add_radii=None, filepath=None, base_dir=None, grid=False, fps=20,):
-#     """
-#     Animate profiles wit constant scale and with inset for time evolution.
-#     Scale stays constant throughout.
-
-#     Arguments
-#     ---------
-#     model : State object, Config object, or model_no
-#         Each model can be a State, Config, or integer model number.
-#     profiles : list of str, optional
-#         Profiles to plot.  Options are 'rho', 'm', 'v2', 'trelax', 'eta'.
-#     insets : list of str or None, optional
-#         Inset plots to include.  Options are any quantity in time_evolution.txt
-#     xaxis : list of str, optional
-#         X-axis for profiles to plot.  Default is 'r'.  Other option is 'm'.
-#     add_radii : list, optional
-#         List of radii to add to profiles from time_evolution.txt
-#         Options: 'r_c', 'r_50[heavy]', etc
-#     filepath : str, optional
-#         Save the plot to this file.  Defaults to '/base_dir/ModelXXXXX/movie_deluxe.mp4'
-#     base_dir : str, optional
-#         Required if any model is passed as an integer.  The directory in which all ModelXXXXX subdirectories reside.
-#     grid : bool, optional
-#         If True, shows grid on axes
-#     fps : int, optional
-#         Frames per second for the output movie. Default is 20
-
-#     Returns
-#     -------
-#     None
-#         Saves the movie as an MP4 file in the model directory.
-#     """
-#     # Collect profiles and insets
-#     if profiles is None:
-#         profiles = ['rho', 'v2']
-#     elif isinstance(profiles, str):
-#         profiles = [profiles]
-#     if insets is None:
-#         insets = ['rho_c_tot'] + [None] * (len(profiles) - 1)
-#     elif isinstance(insets, str) or insets is None:
-#         insets = [insets]
-#     if xaxis is None:
-#         xaxis = ['r'] * len(profiles)
-#     elif isinstance(xaxis, str):
-#         xaxis = [xaxis]
-
-#     # Validate profiles
-#     valid_profiles = ['rho', 'm', 'v2', 'trelax', 'eta']
-#     if any(profile not in valid_profiles for profile in profiles):
-#         raise ValueError(f"Invalid profile specified. Valid options are: {valid_profiles}")
-    
-#     # Validate radii
-#     valid_radii = ['r_c', 'r01', 'r05', 'r10', 'r20', 'r50', 'r90']
-#     if add_radii is not None:
-#         if isinstance(add_radii, str):
-#             add_radii = [add_radii]
-#         if any(radius not in valid_radii for radius in add_radii):
-#             raise ValueError(f"Invalid radius specified. Valid options are: {valid_radii}")
-        
-#     # Validate xaxis
-#     valid_xaxis = ['r', 'm']
-#     if any(x not in valid_xaxis for x in xaxis):
-#         raise ValueError(f"Invalid x-axis specified. Valid options are: {valid_xaxis}")
-
-#     # Number of panels
-#     n = len(profiles) 
-
-#     # Get the model directory
-#     if hasattr(model, 'config'):        # Passed state object
-#         model_dir = os.path.join(model.config.io.base_dir, model.config.io.model_dir)
-#     elif hasattr(model, 'io'):          # Passed config object
-#         model_dir = os.path.join(model.io.base_dir, model.io.model_dir)
-#     elif isinstance(model, int):        # Passed model number
-#         if base_dir is None:
-#             raise ValueError("'base_dir' (base directory) must be specified if using model numbers.")
-#         model_dir = f"Model{model:05d}"
-#         model_dir = os.path.join(base_dir, model_dir)
-#     else:
-#         raise TypeError(f"Unrecognized model type: {type(model)}. Must be a State object, Config object, or integer.")
-    
-#     # Load rhoc time evolution data
-#     print(f"Getting time evolution data...")
-#     time_evolution_path = os.path.join(model_dir, f"time_evolution.txt")
-#     time_data = extract_time_evolution_data(time_evolution_path)
-#     tevo_t = time_data['time']
-
-#     # Validate insets
-#     valid_insets = list(time_data.keys())
-#     if any(inset not in valid_insets for inset in insets if inset is not None):
-#         raise ValueError(f"Invalid inset specified. Valid options are: {valid_insets}")
-#     if len(insets) != len(profiles):
-#         raise ValueError("'insets' must have the same length as 'profiles'.")
-
-#     # Load snapshot indices
-#     snapshot_indices_data   = extract_snapshot_indices(model_dir)
-#     indices                 = snapshot_indices_data['index']
-#     index_t                 = snapshot_indices_data['time']
-
-#     # Get axis limits
-#     print(f"Getting axis limits...")
-#     snapshot_data_list = []
-
-#     for ind in indices:
-#         snapshot_path = os.path.join(model_dir, f"profile_{ind}.dat")
-
-#         if not os.path.isfile(snapshot_path):
-#             continue
-
-#         snapshot_data_list.append(extract_snapshot_data(snapshot_path))
-
-#     axislims = {}
-
-#     for i, profile in enumerate(profiles):
-#         xlim, ylim = get_profile_axis_limits(profile, snapshot_data_list, xaxis=xaxis[i])
-#         axislims[profile] = (xlim, ylim)
-
-#     # Create a temporary directory for storing images
-#     temp_dir = os.path.join(model_dir, "temp_images")
-#     if os.path.exists(temp_dir):
-#         shutil.rmtree(temp_dir)             # Delete the directory and all its contents
-#     os.makedirs(temp_dir)
-
-#     image_paths = []                        # List to store paths of generated images
-
-#     print(f"Generating {len(indices)} frames...")
-#     for ind in tqdm(indices, desc="Frames", unit="frame"):
-#         snapshot_path = os.path.join(model_dir, f"profile_{ind}.dat")
-#         if not os.path.isfile(snapshot_path):
-#             continue                        # Skip if the snapshot file does not exist
-
-#         # Define the output image path for the current frame
-#         image_path = os.path.join(temp_dir, f"frame_{ind:04d}.png")
-
-#         # Extract data for current frame and initial frame
-#         initial_snapshot_path   = os.path.join(model_dir, f"profile_0.dat")
-#         data_list               = [
-#             extract_snapshot_data(initial_snapshot_path), 
-#             extract_snapshot_data(snapshot_path)
-#             ]
-
-#         # Plot profile and initial profile
-#         fig, axs = plt.subplots(1, n, figsize=(6*n, 5))
-#         axs = np.atleast_1d(axs)
-
-#         for i, ax in enumerate(axs):
-#             profile = profiles[i]
-#             inset   = insets[i]
-#             xax     = xaxis[i]
-
-#             legend = True if i == 0 else False
-#             plot_profile(ax, profile, data_list, xaxis=xax, axislims=axislims[profile], legend=legend, grid=grid, for_movie=True)
-
-#             if add_radii is not None:
-#                 frac_up = 0.15
-#                 for radius in add_radii:
-#                     if radius in ['r01', 'r05', 'r10', 'r20', 'r50', 'r90']: # One per species
-#                         for spec in time_data['species']:
-#                             r = np.interp(index_t[ind], tevo_t, time_data['species'][spec][radius])
-#                             if xax == 'r':
-#                                 # If r is outside the x-axis limits, skip plotting
-#                                 if r < axislims[profile][0][0] or r > axislims[profile][0][1]:
-#                                     continue
-#                                 ax.axvline(r, color='red', ls='--', zorder=-10)
-#                                 trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
-#                                 ax.text(r, frac_up, f"{radius}[{spec}]", rotation=90, color='red', fontsize=10, ha='right', va='bottom', zorder=-10, transform=trans)
-#                             elif xax == 'm':
-#                                 m = np.interp(r, 10**data_list[1]['log_r'], data_list[1]['m_tot'])
-#                                 # If r is outside the x-axis limits, skip plotting
-#                                 if m < axislims[profile][0][0] or m > axislims[profile][0][1]:
-#                                     continue
-#                                 ax.axvline(m, color='red', ls='--', zorder=-10)
-#                                 trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
-#                                 ax.text(m, frac_up, f"{radius}[{spec}]", rotation=90, color='red', fontsize=10, ha='right', va='bottom', zorder=-10, transform=trans)
-#                     else:
-#                         r = np.interp(index_t[ind], tevo_t, time_data[radius])
-#                         if xax == 'r':
-#                             # If r is outside the x-axis limits, skip plotting
-#                             if r < axislims[profile][0][0] or r > axislims[profile][0][1]:
-#                                 continue
-#                             ax.axvline(r, color='red', ls='--', zorder=-10)
-#                             trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
-#                             ax.text(r, frac_up, radius, rotation=90, color='red', fontsize=10, ha='right', va='bottom', zorder=-10, transform=trans)
-#                         elif xax == 'm':
-#                             m = np.interp(r, 10**data_list[1]['log_r'], data_list[1]['m'])
-#                             # If r is outside the x-axis limits, skip plotting
-#                             if m < axislims[profile][0][0] or m > axislims[profile][0][1]:
-#                                 continue
-#                             ax.axvline(m, color='red', ls='--', zorder=-10)
-#                             trans = transforms.blended_transform_factory(ax.transData, ax.transAxes)
-#                             ax.text(m, frac_up, radius, rotation=90, color='red', fontsize=10, ha='right', va='bottom', zorder=-10, transform=trans)
-
-#             if inset is not None:
-#                 tevo_y = time_data[inset]
-#                 if profile != 'trelax':
-#                     axin = ax.inset_axes([0.55, 0.65, 0.45, 0.35])
-#                 else:
-#                     axin = ax.inset_axes([0.0, 0.65, 0.45, 0.35])
-#                 axin.axvline(index_t[ind], color='grey')
-#                 axin.plot(tevo_t, tevo_y, color='black')
-#                 axin.scatter(index_t[ind], np.interp(index_t[ind], tevo_t, tevo_y),
-#                             color='red', s=50)
-#                 axin.set_ylabel(inset, fontsize=12)
-#                 axin.set_xlabel('$t$', fontsize=12)
-#                 axin.set_yscale('log')
-#                 axin.tick_params(
-#                     axis='both',
-#                     which='both',
-#                     labelbottom=False,
-#                     labelleft=False,
-#                     labeltop=False,
-#                     labelright=False,
-#                     top=True,
-#                     bottom=True,
-#                     left=True,
-#                     right=True,
-#                     direction='in'
-#                 )
-        
-#         fig.savefig(image_path, dpi=300, bbox_inches='tight')
-#         plt.close(fig)
-#         image_paths.append(image_path)  # Add the image path to the list
-
-#     print("Compiling into a movie using ffmpeg...")
-
-#     if filepath is not None:
-#         output_movie_path = filepath
-#     else:
-#         output_movie_path = os.path.join(model_dir, f"movie_deluxe.mp4")
-
-#     # Construct the ffmpeg command to create the movie
-#     movie_command = [
-#         "ffmpeg",
-#         "-y",                                           # Overwrite output file if it exists
-#         "-framerate", str(fps),                         # Set frames per second
-#         "-i", os.path.join(temp_dir, "frame_%04d.png"), # Input image sequence
-#         "-c:v", "libx264",                              # Use H.264 codec
-#         "-pix_fmt", "yuv420p",                          # Set pixel format for compatibility
-#         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",     # Ensure even dimensions
-#         output_movie_path
-#     ]
-
-#     # Run the ffmpeg command
-#     subprocess.run(movie_command, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT, check=True)
-
-#     print("Deleting frames...")
-#     # Clean up temporary images
-#     shutil.rmtree(temp_dir, ignore_errors=True)
-
-#     # Print the location of the saved movie
-#     print(f"Movie saved to {output_movie_path}")
-
-# def make_movie_deluxe(model, parallel=True, **kwargs):
-#     """
-#     Top-level function for calling make_movie_deluxe,
-#     either serial or parallel.
-#     """
-#     if parallel:
-#         make_movie_deluxe_parallel(model, **kwargs)
-#     else:
-#         make_movie_deluxe_serial(model, **kwargs)
