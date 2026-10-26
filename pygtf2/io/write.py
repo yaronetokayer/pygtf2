@@ -590,7 +590,7 @@ def write_time_evolution(state):
 
     # --- Per-species columns
     percents = np.array(
-        [0.01, 0.05, 0.10, 0.20, 0.50, 0.90],
+        [0.01, 0.05, 0.10, 0.20, 0.50, 0.80, 0.90],
         dtype=np.float64,
     )
 
@@ -618,7 +618,8 @@ def write_time_evolution(state):
             (f"r10[{name}]", radii[2]),
             (f"r20[{name}]", radii[3]),
             (f"r50[{name}]", radii[4]),
-            (f"r90[{name}]", radii[5]),
+            (f"r80[{name}]", radii[5]),
+            (f"r90[{name}]", radii[6]),
             (f"r50evo[{name}]", r50evo[k]),
             (f"m_c[{name}]", m_ck),
         ])
