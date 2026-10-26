@@ -1,6 +1,6 @@
 import numpy as np 
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
-from pygtf2.evolve.transport import compute_luminosities, add_dv2dt_conduction, add_dv2dt_hex, apply_dv2dt, conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT
+from pygtf2.evolve.transport import conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT
 from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi, STATUS_SHELL_CROSSING
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binary_heating
@@ -38,7 +38,6 @@ def run_until_stop(state, start_step, **kwargs):
     # Switches
     # evap = sim.evap
     binaries = sim.binaries; n_particle = sim.n_particle
-    conduct_imex = sim.conduct_imex
 
     # Parameters
     c1 = float(char.c1); c2 = float(char.c2)
@@ -106,9 +105,9 @@ def run_until_stop(state, start_step, **kwargs):
 
         # Integrate time step
         integrate_time_step(state, dt_prop, step_count,
-                            conduct_imex, binaries, # evap,         # Switches
+                            binaries, # evap,                                               # Switches
                             eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param, n_particle,  # Parameters
-                            work_sn1, work_sn2,                     # Preallocated arrays
+                            work_sn1, work_sn2,                                             # Preallocated arrays
                             work_snout1, work_snout2,
                             work_n1, work_n2, work_n3, work_n4,
                             work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
@@ -185,7 +184,7 @@ def run_until_stop(state, start_step, **kwargs):
             print("Simulation halted: max time exceeded")
 
 def integrate_time_step(state, dt_prop, step_count,                 # State
-                        conduct_imex, binaries, # evap              # Switches
+                        binaries, # evap                            # Switches
                         eps_du, max_iter_du,
                         c1, c2, mrat, lnL, bkg_param, n_particle,   # Parameters
                         work_sn1, work_sn2,                         # Preallocated arrays
@@ -205,8 +204,6 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Proposed timestep from the caller's adaptive controller.
     step_count : int
         Step count
-    conduct_imex : bool
-        Whether to use IMEX method for conduction step.
     binaries : bool
         Activate heat generation due to binaries.
     eps_du : float
@@ -231,6 +228,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Memory allocation for working arrays
     """
     # Pointers for easy access
+    m_bh        = float(state.m_bh)
     r           = np.asarray(state.r,       dtype=np.float64)
     m           = np.asarray(state.m,       dtype=np.float64)
     v2          = np.asarray(state.v2,      dtype=np.float64)
@@ -249,8 +247,6 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
             v2[:,:] = work_sn2
 
         # IMEX METHOD
-        if not conduct_imex:
-            raise RuntimeError(f"Step {step_count}: Explicit conduction method is deprecated.")
         order = STRANG_SPLIT
         conduct_imex_once(
             v2, rho, r, m,
@@ -277,36 +273,6 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
 
     dt_prop = dt_trial
 
-    ##################################################################################################################################
-
-    # # IMEX METHOD
-    # if conduct_imex:
-    #     order = STRANG_SPLIT
-    #     du_max, dt_prop, iter_du = conduct_imex_dulim(
-    #         v2, rho, r, m,
-    #         c1, c2, mrat, lnL,
-    #         work_sn1, work_sn2, work_n1, work_n2, work_n3, work_n4,
-    #         dt_prop, eps_du, order, max_iter_du,
-    #     )
-
-    # # EXPLICIT METHOD
-    # else:
-    #     lum     = np.zeros_like(r,  dtype=np.float64)
-    #     dv2dt   = np.zeros_like(v2, dtype=np.float64)
-    #     compute_luminosities(c2, r, v2, rho, mrat, lnL, lum)
-    #     add_dv2dt_conduction(m, lum, dv2dt)
-    #     add_dv2dt_hex(v2, rho, lnL, mrat, r, c1, dv2dt)
-    #     du_max, dt_prop = apply_dv2dt(v2, dv2dt, dt_prop, eps_du)
-
-    # if iter_du == -1:
-    #     raise RuntimeError(f"Step {step_count}: Max iterations exceeded in conduction step.")
-
-    # # Apply heating
-    # if binaries:
-    #     v2_cond, p, eps_max = binaries_heating(rmid_orig, rho, v2_cond, dt_prop, n_particle)
-
-    ##################################################################################################################################
-
     # Apply evaporation
     # if evap:
     #     evaporate(r, rmid_orig, m, v2_cond, rho, dt_prop) # Modifies rho and m in place
@@ -316,7 +282,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
 
     ### Step 2: Reestablish hydrostatic equilibrium ###
     status = revirialize_interp_jacobi(
-        r, rho, work_sn1, m, bkg_param,
+        r, rho, work_sn1, m, m_bh, bkg_param,
         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
         work_n1, work_snout2, work_snout1,
         ) # Modifies r, rho, p in place
@@ -330,6 +296,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     # r and rho were modified in place already; no need to assign them
     # Still need to update v2 based on the new p and rho
     np.divide(work_sn1, rho, out=state.v2)
+    
     # if evap:
     #     state.m = m
 

@@ -2,21 +2,11 @@ import numpy as np
 import math
 from numba import njit, float64, types, void, int64
 from pygtf2.util.interpolate import interp_m_enc, interp_m_enc_and_K
-from pygtf2.util.calc import add_bkg_pot, solve_tridiagonal_thomas, add_bkg_K
+from pygtf2.util.calc import add_bkg_pot, add_m_bh, solve_tridiagonal_thomas, add_bkg_K
 
 STATUS_OK = 0
 STATUS_SHELL_CROSSING = 1
 _TINY64 = np.finfo(np.float64).tiny
-
-@njit(float64[:](float64[:]), cache=True, fastmath=True)
-def compute_mass(m) -> np.ndarray:
-    """
-    Return the input enclosed-mass array unchanged, without copying it.
-
-    This legacy identity helper does not add other species or backgrounds.
-    """
-
-    return m
 
 @njit(void(float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
 def update_r_p_rho(r, x, p, rho, work):
@@ -416,8 +406,8 @@ def build_tridiag_system_log(r, rho, p, m_tot, a, b, c, y):
     c[0] = -5.0 * rR3rC3
     y[0] = -(math.log(p[1]) - math.log(p[0]))
 
-@njit(float64(float64[:, :], float64[:, :], float64[:, :], float64[:,:], float64[:]), fastmath=True,cache=True)
-def compute_he_resid_norm(r, rho, p, m, bkg_param):
+@njit(float64(float64[:, :], float64[:, :], float64[:, :], float64[:,:], float64, float64[:]), fastmath=True,cache=True)
+def compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param):
     """
     Compute an (unscaled) norm of the HE residual
     """
@@ -435,12 +425,14 @@ def compute_he_resid_norm(r, rho, p, m, bkg_param):
         interp_m_enc(k, r, m, m_totk)
         if add_bkg_flag:
             add_bkg_pot(r[k], bkg_param, m_totk)
+        if m_bh != 0.0:
+            add_m_bh(r[k], m_bh, m_totk)
         res_vec[k] = - (4.0 / m_totk[1:-1]) * (rC[k]**2 / dr[k]) * (dp[k] / srho[k]) - 1.0
 
     return np.linalg.norm(res_vec)
 
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]), fastmath=True, cache=True)
-def compute_he_pressures(r, rho, p, m, bkg_param):
+@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64[:]), fastmath=True, cache=True)
+def compute_he_pressures(r, rho, p, m, m_bh, bkg_param):
     """
     In-place hydrostatic-equilibrium pressure update for unaligned radial grids.
 
@@ -456,6 +448,8 @@ def compute_he_pressures(r, rho, p, m, bkg_param):
         Shell pressures per species. Updated in place.
     m : ndarray, shape (s, N+1)
         Each species' own enclosed mass at its radial edges.
+    m_bh : float
+        Mass of central black hole
     bkg_param : ndarray, shape (4,)
         Parameters for background potential.
     """
@@ -473,6 +467,8 @@ def compute_he_pressures(r, rho, p, m, bkg_param):
 
         if use_bkg:
             add_bkg_pot(r[k], bkg_param, m_totk)
+        if m_bh != 0.0:
+            add_m_bh(r[k], m_bh, m_totk)
 
         rk = r[k]
         rhok = rho[k]
@@ -489,8 +485,8 @@ def compute_he_pressures(r, rho, p, m, bkg_param):
                 (quarter / (rip1 * rip1))
             )
 
-@njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]), fastmath=True, cache=True)
-def compute_he_pressures_with_resid(r, rho, p, m, bkg_param):
+@njit(types.Tuple((float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64[:]), fastmath=True, cache=True)
+def compute_he_pressures_with_resid(r, rho, p, m, m_bh, bkg_param):
     """
     In-place hydrostatic-equilibrium pressure update for unaligned radial grids.
 
@@ -506,6 +502,8 @@ def compute_he_pressures_with_resid(r, rho, p, m, bkg_param):
         Shell pressures per species. Updated in place.
     m : ndarray, shape (s, N+1)
         Each species' own enclosed mass at its radial edges.
+    m_bh : float
+        Mass of central black hole
     bkg_param : ndarray, shape (4,)
         Parameters for background potential.
 
@@ -516,9 +514,9 @@ def compute_he_pressures_with_resid(r, rho, p, m, bkg_param):
     res_new : float
         HE residual after in-place pressure update.
     """
-    res_old = compute_he_resid_norm(r, rho, p, m, bkg_param)
-    compute_he_pressures(r, rho, p, m, bkg_param)
-    res_new = compute_he_resid_norm(r, rho, p, m, bkg_param)
+    res_old = compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
+    compute_he_pressures(r, rho, p, m, m_bh, bkg_param)
+    res_new = compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
     return res_old, res_new
 
 @njit(
@@ -527,6 +525,7 @@ def compute_he_pressures_with_resid(r, rho, p, m, bkg_param):
         float64[:, :], # rho
         float64[:, :], # p
         float64[:, :], # m
+        float64,       # m_bh
         float64[:],    # bkg_param
         float64[:],    # a 
         float64[:],    # b
@@ -540,7 +539,7 @@ def compute_he_pressures_with_resid(r, rho, p, m, bkg_param):
     cache=True, fastmath=True,
 )
 def revirialize_interp_jacobi(
-    r, rho, p, m, bkg_param,
+    r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
     ) -> int:
     """
@@ -561,6 +560,8 @@ def revirialize_interp_jacobi(
         Shell pressures per species. Updated in place.
     m : ndarray, shape (s, N+1)
         Each species' own enclosed mass at its edges. Not updated.
+    m_bh : float
+        Mass of central black hole
     bkg_param : ndarray, shape (4,)
         Parameters for background potential.
     a, b, c, y, xk : ndarray, shape (N-1,)
@@ -586,6 +587,8 @@ def revirialize_interp_jacobi(
         if add_bkg_flag:
             add_bkg_pot(r[k], bkg_param, m_tot_all[k])
             add_bkg_K(r[k], bkg_param, K_all[k])
+        if m_bh != 0.0:
+            add_m_bh(r[k], m_bh, m_tot_all[k])
 
     # Pass 2: update each species using the frozen profiles
     for k in range(s):
@@ -607,6 +610,7 @@ def revirialize_interp_jacobi(
         float64[:, :], 
         float64[:, :], 
         float64[:, :], 
+        float64,
         float64[:],
         float64[:],    # a 
         float64[:],    # b
@@ -620,7 +624,7 @@ def revirialize_interp_jacobi(
     cache=True, fastmath=True
 )
 def revirialize_interp_jacobi_diagnostics(
-    r, rho, p, m, bkg_param,
+    r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
     ) -> tuple:
     """
@@ -641,6 +645,8 @@ def revirialize_interp_jacobi_diagnostics(
         Shell pressures per species. Updated in place.
     m : ndarray, shape (s, N+1)
         Each species' own enclosed mass at its edges. Not updated.
+    m_bh : float
+        Mass of central black hole
     bkg_param : ndarray, shape (4,)
         Parameters for background potential.
     a, b, c, y, xk : ndarray, shape (N-1,)
@@ -679,6 +685,8 @@ def revirialize_interp_jacobi_diagnostics(
         if add_bkg_flag:
             add_bkg_pot(r[k], bkg_param, m_tot_all[k])
             add_bkg_K(r[k], bkg_param, K_all[k])
+        if m_bh != 0.0:
+            add_m_bh(r[k], m_bh, m_tot_all[k])
 
     # Pass 2: update each species using the frozen profiles
     for k in range(s):
@@ -697,162 +705,6 @@ def revirialize_interp_jacobi_diagnostics(
             if r[k, i + 1] - r[k, i] <= 0.0:
                 return STATUS_SHELL_CROSSING, dr_max, -1.0
             
-    he_res = compute_he_resid_norm(r, rho, p, m, bkg_param)
+    he_res = compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
 
     return STATUS_OK, dr_max, he_res
-
-
-# @njit(types.Tuple((int64, float64, float64))(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]), cache=True, fastmath=True,)
-# def revirialize_interp_gs_diagnostics(r, rho, p, m, bkg_param) -> tuple[int, float, float]:
-#     """
-#     Multi-species re-virialization.  Updates r, rho, and p in place.  With diagnostics.
-#     To be used during state initialization.
-
-#     Solves for radius adjustments and updates physical quantities for all species.
-#     Species generally do not have aligned radial bins, so enclosed mass from the
-#     other species is interpolated onto the current species grid.
-
-#     Updates to per-species r arrays are fed back into next species revir - this is found to be necessary.
-
-#     Parameters
-#     ----------
-#     r : ndarray, shape (s, N+1)
-#         Edge radii per species. Updated in place.
-#     rho : ndarray, shape (s, N)
-#         Shell densities per species. Updated in place.
-#     p : ndarray, shape (s, N)
-#         Shell pressures per species. Updated in place.
-#     m : ndarray, shape (s, N+1)
-#         Total enclosed mass at edges, per species. Not updated.
-#     bkg_param : ndarray, shape (4,)
-#         Parameters for background potential.
-
-#     Returns
-#     -------
-#     status : int
-#         STATUS_OK if successful,
-#         STATUS_SHELL_CROSSING if any radii cross.
-#     dr_max : float
-#         Global maximum |dr/r| across all species.
-#     he_res : float
-#         Norm of HE residual for updated profile.
-#         If shell crossing occurs, returns -1.0 as a sentinel.
-
-#     Notes
-#     -----
-#     This function solves a tridiagonal system to compute radius corrections for each species,
-#     then updates density and pressure accordingly. If any radii cross, the function returns
-#     'shell_crossing'. Since updates are in place, the arrays may already be partially or fully 
-#     modified when that happens.
-#     """
-#     s, Np1 = r.shape
-#     dr_max = 0.0
-#     add_bkg_flag = bkg_param[0] != -1
-
-#     # Pre-allocate tridiagonal coefficient and work arrays
-#     n_int   = Np1 - 2
-#     a       = np.empty(n_int, dtype=np.float64)
-#     b       = np.empty(n_int, dtype=np.float64)
-#     c       = np.empty(n_int, dtype=np.float64)
-#     y       = np.empty(n_int, dtype=np.float64)
-#     xk      = np.empty(n_int, dtype=np.float64)
-#     vol_old = np.empty(Np1 - 1, dtype=np.float64)
-#     m_totk  = np.empty(Np1, dtype=np.float64)
-#     K_k     = np.empty(Np1, dtype=np.float64)
-
-#     for k in range(s):
-#         # interp_m_enc(k, r, m, m_totk)
-#         interp_m_enc_and_K(k, r, m, m_totk, K_k)
-
-#         if add_bkg_flag: # For the future: make this in-place too
-#             m_totk += add_bkg_pot(r[k], bkg_param)
-        
-#         # build_tridiag_system(r[k], rho[k], p[k], m_totk, a, b, c, y)
-#         build_tridiag_system_mother(r[k], rho[k], p[k], m_totk, K_k, a, b, c, y)
-#         solve_tridiagonal_thomas(a, b, c, y, xk)
-        
-#         local_max = np.max(np.abs(xk))
-#         if local_max > dr_max:
-#             dr_max = local_max
-        
-#         update_r_p_rho(r[k], xk, p[k], rho[k], vol_old)
-
-#     for k in range(s):
-#         for i in range(Np1 - 1):
-#             if r[k, i + 1] - r[k, i] <= 0.0:
-#                 return STATUS_SHELL_CROSSING, dr_max, -1.0
-
-#     he_res = compute_he_resid_norm(r, rho, p, m, bkg_param)
-
-#     return STATUS_OK, dr_max, he_res
-
-# @njit(int64(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:]), cache=True, fastmath=True)
-# def revirialize_interp_gs(r, rho, p, m, bkg_param) -> int:
-#     """
-#     Multi-species re-virialization.  Updates r, rho, and p in place.  No diagnostics.
-
-#     Solves for radius adjustments and updates physical quantities for all species.
-#     Species generally do not have aligned radial bins, so enclosed mass from the
-#     other species is interpolated onto the current species grid.
-
-#     Updates to per-species r arrays are fed back into next species revir - this is a Gauss-Seidel-like scheme.
-
-#     Parameters
-#     ----------
-#     r : ndarray, shape (s, N+1)
-#         Edge radii per species. Updated in place.
-#     rho : ndarray, shape (s, N)
-#         Shell densities per species. Updated in place.
-#     p : ndarray, shape (s, N)
-#         Shell pressures per species. Updated in place.
-#     m : ndarray, shape (s, N+1)
-#         Total enclosed mass at edges, per species. Not updated.
-#     bkg_param : ndarray, shape (4,)
-#         Parameters for background potential.
-
-#     Returns
-#     -------
-#     status : int
-#         STATUS_OK if successful,
-#         STATUS_SHELL_CROSSING if any radii cross.
-
-#     Notes
-#     -----
-#     This function solves a tridiagonal system to compute radius corrections for each species,
-#     then updates density and pressure accordingly. If any radii cross, the function returns
-#     'shell_crossing'. Since updates are in place, the arrays may already be partially or fully 
-#     modified when that happens.
-#     """
-#     s, Np1 = r.shape
-#     add_bkg_flag = bkg_param[0] != -1
-
-#     # Pre-allocate tridiagonal coefficient and work arrays
-#     n_int   = Np1 - 2
-#     a       = np.empty(n_int, dtype=np.float64)
-#     b       = np.empty(n_int, dtype=np.float64)
-#     c       = np.empty(n_int, dtype=np.float64)
-#     y       = np.empty(n_int, dtype=np.float64)
-#     xk      = np.empty(n_int, dtype=np.float64)
-#     vol_old = np.empty(Np1 - 1, dtype=np.float64)
-#     m_totk  = np.empty(Np1, dtype=np.float64)
-#     K_k     = np.empty(Np1, dtype=np.float64)
-
-#     for k in range(s):
-#         # interp_m_enc(k, r, m, m_totk)
-#         interp_m_enc_and_K(k, r, m, m_totk, K_k)
-
-#         if add_bkg_flag: # For the future: make this in-place too
-#             m_totk += add_bkg_pot(r[k], bkg_param)
-        
-#         # build_tridiag_system(r[k], rho[k], p[k], m_totk, a, b, c, y)
-#         build_tridiag_system_mother(r[k], rho[k], p[k], m_totk, K_k, a, b, c, y)
-#         solve_tridiagonal_thomas(a, b, c, y, xk)
-        
-#         update_r_p_rho(r[k], xk, p[k], rho[k], vol_old)
-
-#     for k in range(s):
-#         for i in range(Np1 - 1):
-#             if r[k, i + 1] - r[k, i] <= 0.0:
-#                 return STATUS_SHELL_CROSSING
-
-#     return STATUS_OK

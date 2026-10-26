@@ -577,13 +577,14 @@ class State:
         if chatter:
             print("Ensuring initial hydrostatic equilibrium...")
 
-        r_new = self.r.astype(np.float64, copy=True)
+        r_new   = self.r.astype(np.float64, copy=True)
         rho_new = self.rho.astype(np.float64, copy=True)
-        p_new = rho_new * self.v2.astype(np.float64, copy=True)
-        m = self.m.astype(np.float64, copy=False)
+        p_new   = rho_new * self.v2.astype(np.float64, copy=True)
+        m       = self.m.astype(np.float64, copy=False)
+        m_bh    = self.m_bh
 
         # --- Update pressure with backward sweep ---
-        res_old, res_new = compute_he_pressures_with_resid(r_new, rho_new, p_new, m, bkg_param)
+        res_old, res_new = compute_he_pressures_with_resid(r_new, rho_new, p_new, m, m_bh, bkg_param)
         if chatter:
             print(f"\tInitial pressure correction applied. HE residual improved {float(res_old):.3e} -> {float(res_new):.3e}.")
 
@@ -604,9 +605,8 @@ class State:
         i = 0
         while True:
             i += 1
-            # status, dr_max_new, he_res = revirialize_interp_gs_diagnostics(r_new, rho_new, p_new, m, bkg_param)
             status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(
-                r_new, rho_new, p_new, m, bkg_param,
+                r_new, rho_new, p_new, m, m_bh, bkg_param,
                 a, b, c, y, xk, vol_old, K_all, m_tot_all,
                 )
             
@@ -657,8 +657,9 @@ class State:
 
         config = self.config
 
-        self.r = self._setup_grid()
-        self.bkg_param = self._set_bkg_param()
+        self.m_bh       = config.sim.m_bh / self.char.m_s
+        self.r          = self._setup_grid()
+        self.bkg_param  = self._set_bkg_param()
         self._initialize_grid()
         self._ensure_hydrostatic_equilibrium()
 

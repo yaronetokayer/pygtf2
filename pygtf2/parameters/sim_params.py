@@ -17,14 +17,14 @@ class SimParams:
         Parameter b from Zhong & Shapiro (2025; arXiv:2505.18251)
     beta : float
         Parameter beta from Zhong & Shapiro (2025; arXiv:2505.18251)
+    m_bh : float
+        Mass of central black hole in solar masses.
     evap : bool
         Reserved evaporation switch; the current integrator does not apply it.
     binaries : bool
         Include binary heating in simulation
     n_particle: int
         Absolute particle number for binary heat generation
-    conduct_imex : bool
-        Use IMEX conduction scheme instead of explicit scheme
     bkg : dict or None
         Background configuration with exactly the keys prof, mass, length,
         and other. None disables the background. For prof='hernq_static',
@@ -44,10 +44,10 @@ class SimParams:
             alpha : float = 1.217,
             beta : float = 1.0,
             b : float = 0.44,
+            m_bh : float = 0.0,
             evap : bool = False,
             binaries : bool = False,
             n_particle : int = 1e4,
-            conduct_imex : bool = True,
             bkg: dict | None = None,
     ):
         
@@ -57,10 +57,10 @@ class SimParams:
         self._alpha = None
         self._beta = None
         self._b = None
+        self._m_bh = None
         self._evap = None
         self._binaries = None
         self._n_particle = None
-        self._conduct_imex = None
         self._bkg = dict(self.DEFAULT_BKG)
 
         self.t_halt = t_halt
@@ -69,10 +69,10 @@ class SimParams:
         self.alpha = alpha
         self.beta = beta
         self.b = b
+        self.m_bh = m_bh
         self.evap = evap
         self.binaries = binaries
         self._n_particle = int(n_particle)
-        self._conduct_imex = conduct_imex
         if bkg is not None:
             self.bkg = bkg
 
@@ -137,6 +137,16 @@ class SimParams:
         self._b = float(value)
 
     @property
+    def m_bh(self):
+        return self._m_bh
+
+    @m_bh.setter
+    def m_bh(self, value):
+        if value < 0:
+            raise ValueError("m_bh must be non-negative")
+        self._m_bh = float(value)
+
+    @property
     def evap(self):
         return self._evap
 
@@ -165,16 +175,6 @@ class SimParams:
         if value <= 0:
             raise ValueError("n_particle must be positive")
         self._n_particle = int(value)
-
-    @property
-    def conduct_imex(self):
-        return self._conduct_imex
-
-    @conduct_imex.setter
-    def conduct_imex(self, value):
-        if not isinstance(value, (bool, int)) or (isinstance(value, int) and value not in (0, 1)):
-            raise ValueError("conduct_imex must be a bool (True/False) or int (0/1)")
-        self._conduct_imex = bool(value)
 
     @property
     def bkg(self):

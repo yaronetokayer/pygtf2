@@ -264,6 +264,15 @@ def add_bkg_pot(r, bkg_param, m_enc):
     for i in range(r.shape[0]):
         m_enc[i] += add_bkg_pot_scalar(r[i], bkg_param)
 
+@njit(void(float64[:], float64, float64[:]), cache=True, fastmath=True)
+def add_m_bh(r, m_bh, m_enc):
+    """
+    Add the central black hole mass to the enclosed mass array in place.
+    """
+    for i in range(r.size):
+        if r[i] > 0.0:
+            m_enc[i] += m_bh
+
 @njit(void(float64[:], float64[:], float64[:]), fastmath=True, cache=True,)
 def add_bkg_K(r, bkg_param, K_on_k):
     """
