@@ -1,7 +1,7 @@
 import numpy as np 
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 from pygtf2.evolve.transport import conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT
-from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi, STATUS_SHELL_CROSSING
+from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi, STATUS_SHELL_CROSSING, STATUS_CAVITY_REACHED, STATUS_OK
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binary_heating
 from pygtf2.util.interpolate import sum_intensive_loglog_single
@@ -83,15 +83,16 @@ def run_until_stop(state, start_step, **kwargs):
     ### Main loop ###
     #################
 
+    stop_reason = None
+
     while state.t < t_halt:
 
         ###########################
         ### 1. Integrate system ###
         ###########################
 
-        # Increment counter
-        state.step_count += 1
-        step_count = state.step_count
+        # Proposed next step; only commit after successful integration
+        step_count = state.step_count + 1
 
         # Compute proposed dt
         if step_count == 1:
@@ -104,14 +105,22 @@ def run_until_stop(state, start_step, **kwargs):
             dt_prop = fac * state.dt
 
         # Integrate time step
-        integrate_time_step(state, dt_prop, step_count,
-                            binaries, # evap,                                               # Switches
-                            eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param, n_particle,  # Parameters
-                            work_sn1, work_sn2,                                             # Preallocated arrays
-                            work_snout1, work_snout2,
-                            work_n1, work_n2, work_n3, work_n4,
-                            work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
-                            )
+        status = integrate_time_step(
+            state, dt_prop, step_count,
+            binaries, # evap,                                               # Switches
+            eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param, n_particle,  # Parameters
+            work_sn1, work_sn2,                                             # Preallocated arrays
+            work_snout1, work_snout2,
+            work_n1, work_n2, work_n3, work_n4,
+            work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
+        )
+
+        if status == STATUS_CAVITY_REACHED:
+            stop_reason = 'inner cavity reached'
+            break
+
+        # Accept the completed timestep
+        state.step_count = step_count
 
         if step_count % nupdate == 0:
             print(f"Completed step {step_count}", end='\r', flush=True)
@@ -124,14 +133,12 @@ def run_until_stop(state, start_step, **kwargs):
         ###########################
 
         # Hardcoded criteria
-        if rho0 > rho0_halt:
-            if step_count > 1e3:
-                if chatter:
-                    print("Simulation halted: central density exceeds halting value")
+        if rho0 > rho0_halt and step_count > 1e3:
+                stop_reason = 'central density exceeds halting value'
                 break
+        
         if np.isnan(rho0):
-            if chatter:
-                print("Simulation halted: central density is nan")
+            stop_reason = 'central density is nan'
             break
 
         # User halting criteria
@@ -140,8 +147,7 @@ def run_until_stop(state, start_step, **kwargs):
             or (time_limit is not None and state.t - time_i >= time_limit)
             or (rho0_limit is not None and rho0 >= rho0_limit)
         ):
-            if chatter:
-                print("Simulation halted: user stopping condition reached")
+            stop_reason = 'user stopping condition reached'
             break
 
         #########################
@@ -179,9 +185,11 @@ def run_until_stop(state, start_step, **kwargs):
         if step_count % nlog == 0:
             write_log_entry(state, start_step)
 
-    if state.t >= t_halt:
-        if chatter:
-            print("Simulation halted: max time exceeded")
+    if stop_reason is None:
+        stop_reason = 'max time exceeded'
+
+    if chatter:
+        print(f"Simulation halted: {stop_reason}")
 
 def integrate_time_step(state, dt_prop, step_count,                 # State
                         binaries, # evap                            # Switches
@@ -287,10 +295,13 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         work_n1, work_snout2, work_snout1,
         ) # Modifies r, rho, p in place
 
-    # Shell crossing
     if status == STATUS_SHELL_CROSSING:
         raise RuntimeError(f"Step {step_count}: Shell crossing in conduction/revirialization step.")
-        
+
+    elif status == STATUS_CAVITY_REACHED:
+        v2[:,:] = work_sn2 # Restore latest v2
+        return STATUS_CAVITY_REACHED
+
     ### Step 3: Update state variables ###
 
     # r and rho were modified in place already; no need to assign them
@@ -314,3 +325,5 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     state.du_max  = float(du_max)
     state.dt = float(dt_prop)
     state.t += float(dt_prop)
+
+    return STATUS_OK

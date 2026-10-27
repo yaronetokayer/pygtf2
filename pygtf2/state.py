@@ -193,7 +193,7 @@ class State:
             sd = species_block[name]
             # m and r given at outer edges (length N); prepend 0.0
             r_edges = np.empty(Np1, dtype=np.float64)
-            r_edges[0]  = 0.0
+            r_edges[0]  = 0.0 # change to rinner when rewriting this
             r_edges[1:] = 10**sd['lgr'].astype(np.float64)
             m_edges = np.empty(Np1, dtype=np.float64)
             m_edges[0]  = 0.0
@@ -469,17 +469,23 @@ class State:
         if config.io.chatter:
             print("Setting up radial grids for all species...")
 
-        rmin  = float(config.grid.rmin)
-        rmax  = float(config.grid.rmax)
-        ngrid = int(config.grid.ngrid)
+        rmin    = float(config.grid.rmin)
+        rmax    = float(config.grid.rmax)
+        rinner  = float(config.grid.rinner)
+        ngrid   = int(config.grid.ngrid)
 
         xlgrmin = float(np.log10(rmin))
         xlgrmax = float(np.log10(rmax))
 
+        # Automatically reset rinner if it's currently zero and m_bh > 0
+        if (config.sim.m_bh != 0.0) and (rinner == 0.0):
+            print("Warning: rinner is currently set to 0.0, but m_bh > 0. Automatically setting rinner to rmin * 1e-3.")
+            rinner = rmin * 1.0e-3
+
         # Common log-spaced edges (excluding the central point which we set to 0)
-        edges = np.empty(ngrid + 1, dtype=np.float64)
-        edges[0] = 0.0
-        edges[1:] = 10.0 ** np.linspace(xlgrmin, xlgrmax, ngrid, dtype=np.float64)
+        edges       = np.empty(ngrid + 1, dtype=np.float64)
+        edges[0]    = rinner
+        edges[1:]   = 10.0 ** np.linspace(xlgrmin, xlgrmax, ngrid, dtype=np.float64)
 
         # Tile/broadcast for each species: r[k, :] = edges
         r = np.broadcast_to(edges, (config.s, ngrid + 1)).copy()
@@ -530,9 +536,15 @@ class State:
                 kwargs['w_interp'] = self.w_interp[name]
                 kwargs['nu_interp'] = self.nu_interp[name]
 
-            m_base = menc(self.r[i, 1:], init, prec, 
-                          chatter=chatter, **kwargs)
-            m[i, 1:] = frac[i] * m_base                 # Scale by mass fraction
+            m_base = menc(self.r[i, 1:], init, prec, chatter=chatter, **kwargs)
+            
+            # Empty out inner cavity
+            if (r[i, 0] > 0.0) and (i == 0):
+                print("Emptying inner cavity...")
+                m_inner = menc(r[i, :1], init, prec, chatter=chatter, **kwargs)
+                m_base = m_base - m_inner
+            
+            m[i, 1:] = frac[i] * m_base                      # Scale by mass fraction
             v2[i, :] = sigr(r_mid[i, :], init, prec, bkg_param,
                             chatter=chatter, grid=config.grid, **kwargs)
 
@@ -540,23 +552,24 @@ class State:
         rho = 3.0 * ( m[:, 1:] - m[:, :-1] ) / dr3
         p = rho * v2
 
-        # Central smoothing for NFW profile
-        for i, name in enumerate(labels):
-            if spec[name].init.prof == 'nfw':
-                r1 = r[i, 1]
-                rho0_ideal = 1.0 / (r1 * (1.0 + r1)**2)
-                rho[i, 0] = 2.0 * rho0_ideal - rho[i, 1]
-                dr_ratio = (r[i, 2] - r[i, 0]) / (r[i, 3] - r[i, 1])
-                p[i, 0] = p[i, 1] - dr_ratio * (p[i, 2] - p[i, 1])
-                v2[i, 0] = p[i, 0] / rho[i, 0]
+        if config.grid.rinner == 0.0:
+            # Central smoothing for NFW profile
+            for i, name in enumerate(labels):
+                if spec[name].init.prof == 'nfw':
+                    r1 = r[i, 1]
+                    rho0_ideal = 1.0 / (r1 * (1.0 + r1)**2)
+                    rho[i, 0] = 2.0 * rho0_ideal - rho[i, 1]
+                    dr_ratio = (r[i, 2] - r[i, 0]) / (r[i, 3] - r[i, 1])
+                    p[i, 0] = p[i, 1] - dr_ratio * (p[i, 2] - p[i, 1])
+                    v2[i, 0] = p[i, 0] / rho[i, 0]
 
-        # Recompute pressure of central bin such that HE is guaranteed
-        srho0 = rho[:, 1] + rho[:, 0]
-        r_c = r[:, 1]
-        dr_c = r[:, 2] - r[:, 0]
-        m_enc_c = np.sum(m[:, 1])
-        p[:, 0] = p[:, 1] + srho0 * dr_c * m_enc_c / (4.0 * r_c**2)
-        v2[:, 0] = p[:, 0] / rho[:, 0]
+            # Recompute pressure of central bin such that HE is guaranteed
+            srho0 = rho[:, 1] + rho[:, 0]
+            r_c = r[:, 1]
+            dr_c = r[:, 2] - r[:, 0]
+            m_enc_c = np.sum(m[:, 1])
+            p[:, 0] = p[:, 1] + srho0 * dr_c * m_enc_c / (4.0 * r_c**2)
+            v2[:, 0] = p[:, 0] / rho[:, 0]
 
         self.m          = m
         self.rmid       = r_mid
@@ -570,7 +583,7 @@ class State:
         iteratively applies Jacobi revirialization until max |dr/r| < 1e-10.
         Raises RuntimeError on shell crossing or failure within 100 iterations.
         """
-        from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING
+        from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING, STATUS_CAVITY_REACHED
         chatter = self.config.io.chatter
         bkg_param = self.bkg_param
 
@@ -612,6 +625,9 @@ class State:
             
             if status == STATUS_SHELL_CROSSING:
                 raise RuntimeError(f"Initial revir iter {i}: Shell crossing!")
+
+            elif status == STATUS_CAVITY_REACHED:
+                raise RuntimeError(f"Initial revir iter {i}: Cavity reached!")
 
             if dr_max_new < eps_dr:
                 break
