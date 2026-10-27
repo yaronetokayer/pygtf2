@@ -471,20 +471,19 @@ class State:
 
         rmin    = float(config.grid.rmin)
         rmax    = float(config.grid.rmax)
-        rinner  = float(config.grid.rinner)
         ngrid   = int(config.grid.ngrid)
 
         xlgrmin = float(np.log10(rmin))
         xlgrmax = float(np.log10(rmax))
 
         # Automatically reset rinner if it's currently zero and m_bh > 0
-        if (config.sim.m_bh != 0.0) and (rinner == 0.0):
+        if (config.sim.m_bh != 0.0) and (config.grid.rinner == 0.0):
             print("Warning: rinner is currently set to 0.0, but m_bh > 0. Automatically setting rinner to rmin * 1e-3.")
-            rinner = rmin * 1.0e-3
+            config.grid.rinner = rmin * 1.0e-3
 
         # Common log-spaced edges (excluding the central point which we set to 0)
         edges       = np.empty(ngrid + 1, dtype=np.float64)
-        edges[0]    = rinner
+        edges[0]    = float(config.grid.rinner)
         edges[1:]   = 10.0 ** np.linspace(xlgrmin, xlgrmax, ngrid, dtype=np.float64)
 
         # Tile/broadcast for each species: r[k, :] = edges
@@ -539,8 +538,9 @@ class State:
             m_base = menc(self.r[i, 1:], init, prec, chatter=chatter, **kwargs)
             
             # Empty out inner cavity
-            if (r[i, 0] > 0.0) and (i == 0):
-                print("Emptying inner cavity...")
+            if (r[i, 0] > 0.0):
+                if i == 0:
+                    print("Emptying inner cavity...")
                 m_inner = menc(r[i, :1], init, prec, chatter=chatter, **kwargs)
                 m_base = m_base - m_inner
             

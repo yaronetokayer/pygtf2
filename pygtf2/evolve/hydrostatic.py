@@ -334,15 +334,17 @@ def revirialize_interp_jacobi(
 
         # Check whether the first shell enters cavity 
         r1_new = r[k, 1] * (1.0 + xk[0])
-        if r1_new - r[k, 0] <= 0.0:
-            return STATUS_CAVITY_REACHED
+        if r1_new <= r[k, 0]:
+            if r[k, 0] > 0.0:
+                return STATUS_CAVITY_REACHED
+            return STATUS_SHELL_CROSSING
 
         # Store the corrections for the eventual update
         xk_all[k, :] = xk
 
     # Pass 3: commit updates and check for shell crossing
     for k in range(s):
-        update_r_p_rho(r[k], xk, p[k], rho[k], vol_old)
+        update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old)
 
         for i in range(1, Np1 - 1):
             if r[k, i + 1] - r[k, i] <= 0.0:
@@ -441,8 +443,10 @@ def revirialize_interp_jacobi_diagnostics(
 
         # Check whether the first shell enters cavity 
         r1_new = r[k, 1] * (1.0 + xk[0])
-        if r1_new - r[k, 0] <= 0.0:
-            return STATUS_CAVITY_REACHED, -1.0, -1.0
+        if r1_new <= r[k, 0]:
+            if r[k, 0] > 0.0:
+                return STATUS_CAVITY_REACHED, -1.0, -1.0
+            return STATUS_SHELL_CROSSING, -1.0, -1.0
         
         local_max = np.max(np.abs(xk))
         if local_max > dr_max:
@@ -453,7 +457,7 @@ def revirialize_interp_jacobi_diagnostics(
 
     # Pass 3: commit updates and check for shell crossing
     for k in range(s):
-        update_r_p_rho(r[k], xk, p[k], rho[k], vol_old)
+        update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old)
 
         for i in range(Np1 - 1):
             if r[k, i + 1] - r[k, i] <= 0.0:
