@@ -168,7 +168,7 @@ def run_until_stop(state, start_step, **kwargs):
             want_tevol = drho_for_tevol > drho_tevol
 
             if use_r50:
-                denom = r50_spread_last_tevol if abs(r50_spread_last_tevol) > 1e-100 else 1e-100
+                denom = max(abs(r50_spread_last_tevol), 1.0e-6)
                 r50_spread_for_tevol = abs((r50_spread - r50_spread_last_tevol) / denom)
                 if r50_spread_for_tevol > dr50_tevol:
                     want_tevol = True

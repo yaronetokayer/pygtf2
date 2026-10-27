@@ -1,3 +1,5 @@
+import math
+
 class SimParams:
     """
     Simulation control parameters.
@@ -142,8 +144,9 @@ class SimParams:
 
     @m_bh.setter
     def m_bh(self, value):
-        if value < 0:
-            raise ValueError("m_bh must be non-negative")
+        value = float(value)
+        if not math.isfinite(value) or value < 0.0:
+            raise ValueError("m_bh must be finite and non-negative")
         self._m_bh = float(value)
 
     @property

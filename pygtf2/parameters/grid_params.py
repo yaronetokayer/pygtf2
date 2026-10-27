@@ -38,8 +38,8 @@ class GridParams:
 
     @rmin.setter
     def rmin(self, value):
-        if value <= 0 or (self._rmax is not None and value >= self._rmax):
-            raise ValueError("Require 0 < rmin < rmax")
+        if value <= 0 or (self._rmax is not None and value >= self._rmax) or (self._rinner is not None and value <= self._rinner):
+            raise ValueError("Require 0 <= rinner < rmin < rmax")
         self._rmin = float(value)
 
     @property
@@ -49,7 +49,7 @@ class GridParams:
     @rmax.setter
     def rmax(self, value):
         if value <= 0 or (self._rmin is not None and value <= self._rmin):
-            raise ValueError("Require 0 < rmin < rmax")
+            raise ValueError("Require 0 <= rinner < rmin < rmax")
         self._rmax = float(value)
 
     @property
@@ -59,7 +59,7 @@ class GridParams:
     @rinner.setter
     def rinner(self, value):
         if value < 0 or (self._rmin is not None and value >= self._rmin):
-            raise ValueError("Require 0 <= rinner < rmin")
+            raise ValueError("Require 0 <= rinner < rmin < rmax")
         self._rinner = float(value)
 
     @property
