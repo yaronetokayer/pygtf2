@@ -1,7 +1,7 @@
 import numpy as np 
 from numba import njit, float64, types, void
 import math
-from pygtf2.util.interpolate import interp_linear_to_interfaces
+from pygtf2.util.interpolate import interp_linear_to_interfaces, interp_m_enc
 from pygtf2.util.calc import solve_tridiagonal_thomas
 
 HEX_FIRST       = 0
@@ -226,8 +226,8 @@ def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     c[N - 1] = 0.0
     d[N - 1] = duR * inv_sqrt_suR
 
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:], float64[:], float64[:], float64, float64[:], float64[:, :], float64[:, :], float64), cache=True, fastmath=True)
-def conduct_implicit(v2, rho, r, m, 
+@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64[:], float64[:], float64[:], float64[:], float64, float64[:], float64[:, :], float64[:, :], float64), cache=True, fastmath=True)
+def conduct_implicit(v2, rho, r, m, m_bh,
                      a, b, c, d, 
                      c2, mrat, lnL, du_trial, dt,):
     """
@@ -240,12 +240,24 @@ def conduct_implicit(v2, rho, r, m,
     """
     s, N = v2.shape
 
+    if m_bh != 0.0:
+        m_totk = np.empty(N + 1, dtype=np.float64)
+
     for k in range(s):
         rk       = r[k]
         mk       = m[k]
         rhok     = rho[k]
         uk       = 1.5 * v2[k]
         rhok_int = interp_linear_to_interfaces(rk, rhok)
+
+        if m_bh != 0.0:
+            # Total stellar enclosed mass on species k's grid.
+            interp_m_enc(k, r, m, m_totk)
+
+            # Scale conduction coefficient
+            for j in range(N - 1):
+                m_star = m_totk[j + 1]
+                rhok_int[j] *= m_star / (m_star + m_bh)
 
         pref = c2 * (mrat[k] * lnL[k, k])
 
@@ -262,6 +274,7 @@ def conduct_implicit(v2, rho, r, m,
         float64[:, :],  # rho
         float64[:, :],  # r
         float64[:, :],  # m
+        float64,        # m_bh
         float64,        # c1
         float64,        # c2
         float64[:],     # mrat
@@ -277,7 +290,7 @@ def conduct_implicit(v2, rho, r, m,
     cache=True, fastmath=True,
 )
 def conduct_imex_once(
-    v2, rho, r, m,
+    v2, rho, r, m, m_bh,
     c1, c2, mrat, lnL,
     v2_work, a_work, b_work, c_work, d_work,
     dt, order,
@@ -292,10 +305,10 @@ def conduct_imex_once(
     """
     if order == HEX_FIRST:
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
-        conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
+        conduct_implicit(v2, rho, r, m, m_bh, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
 
     elif order == COND_FIRST:
-        conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
+        conduct_implicit(v2, rho, r, m, m_bh, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
 
     elif order == STRANG_SPLIT:
@@ -304,7 +317,7 @@ def conduct_imex_once(
         # First half-step hex on initial state determines dt_eff
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
 
-        conduct_implicit(v2, rho, r, m, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt,)
+        conduct_implicit(v2, rho, r, m, m_bh, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt,)
 
         # Recompute the second half-step on the updated state.
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)

@@ -582,6 +582,8 @@ class State:
         First update pressure with a backward sweep, then
         iteratively applies Jacobi revirialization until max |dr/r| < 1e-10.
         Raises RuntimeError on shell crossing or failure within 100 iterations.
+        For models with a central BH, we retain the profile initializers outermost velocity dispersion as the initial boundary condition,
+        and then reconstruct the interior pressure using the full gravitational field.
         """
         from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING, STATUS_CAVITY_REACHED
         chatter = self.config.io.chatter

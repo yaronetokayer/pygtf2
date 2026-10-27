@@ -257,7 +257,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         # IMEX METHOD
         order = STRANG_SPLIT
         conduct_imex_once(
-            v2, rho, r, m,
+            v2, rho, r, m, m_bh,
             c1, c2, mrat, lnL,
             work_sn1, work_n1, work_n2, work_n3, work_n4,
             dt_trial, order,
