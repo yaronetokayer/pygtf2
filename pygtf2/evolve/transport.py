@@ -8,7 +8,70 @@ HEX_FIRST       = 0
 COND_FIRST      = 1
 STRANG_SPLIT    = 2
 
-### IMEX METHOD
+@njit(
+    void(
+        float64[:, :],  # v2
+        float64[:, :],  # rho
+        float64[:, :],  # r
+        float64[:, :],  # m
+        float64,        # m_bh
+        float64,        # c2
+        float64[:],     # mrat
+        float64[:, :],  # lnL
+        float64[:, :],  # lum
+    ),
+    cache=True, fastmath=True,
+)
+def compute_luminosities(
+    v2, rho, r, m, m_bh,
+    c2, mrat, lnL, lum,
+):
+    """
+    Compute instantaneous conductive luminosities at shell edges.
+
+    Uses the same interface coefficients and temperature dependence
+    as conduct_implicit. Positive luminosity is directed outward.
+    The current insulating boundary conditions give zero luminosity
+    at the first and last edges.
+
+    lum has shape (s, N+1) and is overwritten in place.
+    Inputs and outputs use dimensionless simulation units.
+    """
+    s, N = v2.shape
+    sqrt2 = 1.41421356237309
+
+    if m_bh != 0.0:
+        m_totk = np.empty(N + 1, dtype=np.float64)
+
+    for k in range(s):
+        rk = r[k]
+        uk = 1.5 * v2[k]
+        rhok_int = interp_linear_to_interfaces(rk, rho[k])
+
+        if m_bh != 0.0:
+            interp_m_enc(k, r, m, m_totk)
+
+            for j in range(N - 1):
+                m_star = m_totk[j + 1]
+                rhok_int[j] *= m_star / (m_star + m_bh)
+
+        pref = c2 * (mrat[k] * lnL[k, k])
+
+        lum[k, 0] = 0.0
+        lum[k, N] = 0.0
+
+        for j in range(N - 1):
+            i = j + 1
+
+            drc = 0.5 * (rk[i + 1] - rk[i - 1])
+            coef = rhok_int[j] * rk[i] * rk[i] / drc
+
+            du = uk[j + 1] - uk[j]
+            su = uk[j + 1] + uk[j]
+
+            lum[k, i] = (
+                -sqrt2 * pref * coef * du / math.sqrt(su)
+            )
 
 @njit(void(float64[:, :], float64[:, :],float64[:, :], float64[:], float64[:, :],float64[:, :], float64, float64), cache=True, fastmath = True)
 def hex_explicit(v2, rho, lnL, mrat, r, v2_hex_src_work, dt, c1):
