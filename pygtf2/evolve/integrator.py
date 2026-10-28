@@ -52,19 +52,22 @@ def run_until_stop(state, start_step, **kwargs):
     # Preallocations
     N = config.grid.ngrid
     Nm1 = N - 1
-    work_sn1    = np.empty_like(state.rho, dtype=np.float64)
-    work_sn2    = np.empty_like(state.rho, dtype=np.float64)
-    work_snout1 = np.empty_like(state.m, dtype=np.float64)
-    work_snout2 = np.empty_like(state.m, dtype=np.float64)
-    work_n1     = np.empty(N,      dtype=np.float64)
-    work_n2     = np.empty(N,      dtype=np.float64)
-    work_n3     = np.empty(N,      dtype=np.float64)
-    work_n4     = np.empty(N,      dtype=np.float64)
-    work_nin1   = np.empty(Nm1,    dtype=np.float64)
-    work_nin2   = np.empty(Nm1,    dtype=np.float64)
-    work_nin3   = np.empty(Nm1,    dtype=np.float64)
-    work_nin4   = np.empty(Nm1,    dtype=np.float64)
-    work_nin5   = np.empty(Nm1,    dtype=np.float64)
+    s = state.config.s
+    work_sn1            = np.empty_like(state.rho,  dtype=np.float64)
+    work_sn2            = np.empty_like(state.rho,  dtype=np.float64)
+    work_snout1         = np.empty_like(state.m,    dtype=np.float64)
+    work_snout2         = np.empty_like(state.m,    dtype=np.float64)
+    work_n1             = np.empty(N,               dtype=np.float64)
+    work_n2             = np.empty(N,               dtype=np.float64)
+    work_n3             = np.empty(N,               dtype=np.float64)
+    work_n4             = np.empty(N,               dtype=np.float64)
+    work_nin1           = np.empty(Nm1,             dtype=np.float64)
+    work_nin2           = np.empty(Nm1,             dtype=np.float64)
+    work_nin3           = np.empty(Nm1,             dtype=np.float64)
+    work_nin4           = np.empty(Nm1,             dtype=np.float64)
+    work_nin5           = np.empty(Nm1,             dtype=np.float64)
+    dq_res_trial        = np.empty((s, 2),          dtype=np.float64)
+    dq_res_abs_trial    = np.empty((s, 2),          dtype=np.float64)
 
     # Output options
     t_evol = bool(io.t_evol); profiles = bool(io.profiles)
@@ -118,6 +121,7 @@ def run_until_stop(state, start_step, **kwargs):
             work_snout1, work_snout2,
             work_n1, work_n2, work_n3, work_n4,
             work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
+            dq_res_trial, dq_res_abs_trial,
         )
 
         if status == STATUS_CAVITY_REACHED:
@@ -204,7 +208,8 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
                         work_sn1, work_sn2,                         # Preallocated arrays
                         work_snout1, work_snout2,
                         work_n1, work_n2, work_n3, work_n4,
-                        work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,  
+                        work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
+                        dq_res_trial, dq_res_abs_trial,
                         ):
     """
     Advance state by one time step.
@@ -242,6 +247,8 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Memory allocation for working arrays
     work_nin1, work_nin2, work_nin3, work_nin4, work_nin5 : ndarray (N-1,)
         Memory allocation for working arrays
+    dq_res_trial, dq_res_abs_trial : ndarray (s, 2)
+        Memory allocation for working arrays
     """
     # Pointers for easy access
     m_bh        = float(state.m_bh)
@@ -265,12 +272,16 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     for j in range(max_iter_du):
         if j > 0:  # start from initial state
             v2[:,:] = work_sn2
+        # Reset changes to heat reservoirs
+        if thermal_boundary == FIXED_TEMPERATURE:
+            dq_res_trial[:, :]      = 0.0
+            dq_res_abs_trial[:, :]  = 0.0
 
         # IMEX METHOD
         order = STRANG_SPLIT
         conduct_imex_once(
             v2, rho, r, m, m_bh,
-            thermal_boundary, v2_bdy, dq_res, q_res,
+            thermal_boundary, v2_bdy, dq_res_trial, dq_res_abs_trial,
             c1, c2, mrat, lnL,
             work_sn1, work_n1, work_n2, work_n3, work_n4,
             dt_trial, order,
@@ -306,6 +317,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         r, rho, work_sn1, m, m_bh, bkg_param,
         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
         work_n1, work_snout2, work_snout1,
+        thermal_boundary, v2_bdy,
         ) # Modifies r, rho, p in place
 
     if status == STATUS_SHELL_CROSSING:

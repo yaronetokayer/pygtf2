@@ -3,7 +3,7 @@ import math
 THERMAL_BOUNDARY_STRINGS = ['zero_luminosity', 'fixed_temperature']
 
 class SimParams:
-    f"""
+    """
     Simulation control parameters.
 
     Attributes
@@ -23,9 +23,9 @@ class SimParams:
         Parameter beta from Zhong & Shapiro (2025; arXiv:2505.18251)
     m_bh : float
         Mass of central black hole in solar masses.
-    thermal_boundary : int
+    thermal_boundary : str
         Conductivity boundary condition at inner and outer edges.
-        Options are {THERMAL_BOUNDARY_STRINGS}.
+        Options are ['zero_luminosity', 'fixed_temperature'].
     evap : bool
         Reserved evaporation switch; the current integrator does not apply it.
     binaries : bool

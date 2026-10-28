@@ -1,6 +1,7 @@
 import numpy as np
 import math
 from numba import njit, float64, types, void, int64
+from pygtf2.evolve.transport import ZERO_LUMINOSITY, FIXED_TEMPERATURE
 from pygtf2.util.interpolate import interp_m_enc, interp_m_enc_and_K
 from pygtf2.util.calc import add_bkg_pot, add_m_bh, solve_tridiagonal_thomas, add_bkg_K
 
@@ -9,8 +10,8 @@ STATUS_SHELL_CROSSING = 1
 STATUS_CAVITY_REACHED = 2
 _TINY64 = np.finfo(np.float64).tiny
 
-@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
-def update_r_p_rho(r, x, p, rho, work):
+@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], types.int64, float64[:]), cache=True, fastmath=True)
+def _update_r_p_rho(r, x, p, rho, work, thermal_boundary, v2_bdyk):
     """
     Update interior radii, then density and pressure from shell-volume ratios.
     Pressure follows an adiabatic exponent of 5/3; v2 is not an argument.
@@ -29,6 +30,11 @@ def update_r_p_rho(r, x, p, rho, work):
         Shell-centered densities. Updated in place.
     work : ndarray, shape (N,)
         Scratch array used to store old shell volumes.
+    thermal_boundary : int
+        Specifies thermal boundary condition.
+        For the FIXED_TEMPERATURE case, we need to account for pressure response of reservoir
+    v2_bdy : ndarray, shape (s, 2)
+        Boundary fixed temperature values
     """
     tiny = _TINY64
     gamma = 5.0 / 3.0
@@ -54,11 +60,20 @@ def update_r_p_rho(r, x, p, rho, work):
             V_new = tiny
 
         ratio = work[j] / V_new
-        rho[j] *= ratio
-        p[j] *= ratio ** gamma
 
-@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
-def build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y):
+        rho[j] *= ratio
+
+        if thermal_boundary == FIXED_TEMPERATURE and j == 0:
+            p[j] = rho[j] * v2_bdyk[0]
+
+        elif thermal_boundary == FIXED_TEMPERATURE and j == n - 1:
+            p[j] = rho[j] * v2_bdyk[1]
+
+        else:
+            p[j] *= ratio ** gamma
+
+@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], types.int64), cache=True, fastmath=True)
+def _build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y, thermal_boundary):
     """
     Fill preallocated arrays a, b, c, y with the tridiagonal system
     for the interior fractional radius shifts.
@@ -84,6 +99,9 @@ def build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y):
         Only interior values K_k[1:-1] are used.
     a, b, c, y : ndarray, shape (N-1,)
         Preallocated output arrays to fill in place.
+    thermal_boundary : int
+        Specifies thermal boundary condition.
+        For the FIXED_TEMPERATURE case, we need to account for pressure response of reservoir
     """
     tiny = _TINY64
 
@@ -129,8 +147,17 @@ def build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y):
 
         dd = -(4.0 / Mi) * ((rC * rC) * inv_dr) * (dP / drho)
 
-        c1 = 5.0 * dd * (p[j + 1] / dP) - 3.0 * (rho[j + 1] / drho)
-        c2 = 5.0 * dd * (p[j] / dP)     + 3.0 * (rho[j] / drho)
+        gamma3_L = 5.0
+        gamma3_R = 5.0
+
+        if thermal_boundary == FIXED_TEMPERATURE:
+            if j == 0:
+                gamma3_L = 3.0
+            if j + 1 == p.size - 1:
+                gamma3_R = 3.0
+
+        c1 = gamma3_R * dd * (p[j + 1] / dP) - 3.0 * (rho[j + 1] / drho)
+        c2 = gamma3_L * dd * (p[j] / dP)     + 3.0 * (rho[j] / drho)
 
         # Extra term to account for shifting M_other grid
         lam = rC * K_k[iC] / Mi
@@ -141,7 +168,7 @@ def build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y):
         c[j] = r3a * c1 + q1
 
 @njit(float64(float64[:, :], float64[:, :], float64[:, :], float64[:,:], float64, float64[:]), fastmath=True,cache=True)
-def compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param):
+def _compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param):
     """
     Compute an (unscaled) norm of the HE residual
     """
@@ -166,7 +193,7 @@ def compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param):
     return np.linalg.norm(res_vec)
 
 @njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64[:]), fastmath=True, cache=True)
-def compute_he_pressures(r, rho, p, m, m_bh, bkg_param):
+def _compute_he_pressures(r, rho, p, m, m_bh, bkg_param):
     """
     In-place hydrostatic-equilibrium pressure update for unaligned radial grids.
 
@@ -248,9 +275,9 @@ def compute_he_pressures_with_resid(r, rho, p, m, m_bh, bkg_param):
     res_new : float
         HE residual after in-place pressure update.
     """
-    res_old = compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
-    compute_he_pressures(r, rho, p, m, m_bh, bkg_param)
-    res_new = compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
+    res_old = _compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
+    _compute_he_pressures(r, rho, p, m, m_bh, bkg_param)
+    res_new = _compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
     return res_old, res_new
 
 @njit(
@@ -269,12 +296,15 @@ def compute_he_pressures_with_resid(r, rho, p, m, m_bh, bkg_param):
         float64[:],    # vol_old
         float64[:, :], # K_all
         float64[:, :], # m_tot_all
+        types.int64,   # thermal_boundary
+        float64[:, :], # v2_bdy
     ), 
     cache=True, fastmath=True,
 )
 def revirialize_interp_jacobi(
     r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
+    thermal_boundary, v2_bdy,
     ) -> int:
     """
     Multi-species re-virialization, Jacobi-style in the inter-species coupling.
@@ -304,6 +334,10 @@ def revirialize_interp_jacobi(
         Scratch array for old shell volumes.
     K_all, m_tot_all : ndarray, shape (s, N+1)
         Scratch arrays for other-mass derivatives and total enclosed masses.
+    thermal_boundary : int
+        Specifies conduction boundary condition.
+    v2_bdy : ndarray, shape (s, 2)
+        Fixed temperatures at the boundaries
 
     Returns
     -------
@@ -329,7 +363,7 @@ def revirialize_interp_jacobi(
     # Pass 2: solve for all species, but no update yet
     xk_all = np.empty((s, Np1 - 2), dtype=np.float64)
     for k in range(s):
-        build_tridiag_system_mother(r[k], rho[k], p[k], m_tot_all[k], K_all[k], a, b, c, y)
+        _build_tridiag_system_mother(r[k], rho[k], p[k], m_tot_all[k], K_all[k], a, b, c, y, thermal_boundary)
         solve_tridiagonal_thomas(a, b, c, y, xk)
 
         # Check whether the first shell enters cavity 
@@ -344,7 +378,7 @@ def revirialize_interp_jacobi(
 
     # Pass 3: commit updates and check for shell crossing
     for k in range(s):
-        update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old)
+        _update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old, thermal_boundary, v2_bdy[k])
 
         for i in range(1, Np1 - 1):
             if r[k, i + 1] - r[k, i] <= 0.0:
@@ -368,12 +402,15 @@ def revirialize_interp_jacobi(
         float64[:],    # vol_old
         float64[:, :], # K_all
         float64[:, :], # m_tot_all
+        types.int64,   # thermal_boundary
+        float64[:, :], # v2_bdy
     ), 
     cache=True, fastmath=True
 )
 def revirialize_interp_jacobi_diagnostics(
     r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
+    thermal_boundary, v2_bdy,
     ) -> tuple:
     """
     Apply Jacobi-style multi-species revirialization and return diagnostics.
@@ -403,6 +440,10 @@ def revirialize_interp_jacobi_diagnostics(
         Scratch array for old shell volumes.
     K_all, m_tot_all : ndarray, shape (s, N+1)
         Scratch arrays for other-mass derivatives and total enclosed masses.
+    thermal_boundary : int
+        Specifies conduction boundary condition.
+    v2_bdy : ndarray, shape (s, 2)
+        Fixed temperatures at the boundaries
 
     Returns
     -------
@@ -438,7 +479,7 @@ def revirialize_interp_jacobi_diagnostics(
     # Pass 2: solve for all species, but no update yet
     xk_all = np.empty((s, Np1 - 2), dtype=np.float64)
     for k in range(s):
-        build_tridiag_system_mother(r[k], rho[k], p[k], m_tot_all[k], K_all[k], a, b, c, y)
+        _build_tridiag_system_mother(r[k], rho[k], p[k], m_tot_all[k], K_all[k], a, b, c, y, thermal_boundary)
         solve_tridiagonal_thomas(a, b, c, y, xk)
 
         # Check whether the first shell enters cavity 
@@ -457,12 +498,12 @@ def revirialize_interp_jacobi_diagnostics(
 
     # Pass 3: commit updates and check for shell crossing
     for k in range(s):
-        update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old)
+        _update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old, thermal_boundary, v2_bdy[k])
 
         for i in range(Np1 - 1):
             if r[k, i + 1] - r[k, i] <= 0.0:
                 return STATUS_SHELL_CROSSING, dr_max, -1.0
             
-    he_res = compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
+    he_res = _compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
 
     return STATUS_OK, dr_max, he_res

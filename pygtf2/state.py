@@ -586,6 +586,7 @@ class State:
         and then reconstruct the interior pressure using the full gravitational field.
         """
         from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING, STATUS_CAVITY_REACHED
+        from pygtf2.evolve.transport import ZERO_LUMINOSITY
         chatter = self.config.io.chatter
         bkg_param = self.bkg_param
 
@@ -607,14 +608,15 @@ class State:
         # Preallocate arrays
         s, Np1 = r_new.shape
         n_int = Np1 - 2
-        a  = np.empty(n_int, dtype=np.float64)
-        b  = np.empty(n_int, dtype=np.float64)
-        c  = np.empty(n_int, dtype=np.float64)
-        y  = np.empty(n_int, dtype=np.float64)
-        xk  = np.empty(n_int, dtype=np.float64)
-        vol_old = np.empty(Np1 - 1, dtype=np.float64)
-        K_all   = np.empty((s, Np1), dtype=np.float64)
-        m_tot_all = np.empty((s, Np1), dtype=np.float64)
+        a           = np.empty(n_int,       dtype=np.float64)
+        b           = np.empty(n_int,       dtype=np.float64)
+        c           = np.empty(n_int,       dtype=np.float64)
+        y           = np.empty(n_int,       dtype=np.float64)
+        xk          = np.empty(n_int,       dtype=np.float64)
+        vol_old     = np.empty(Np1 - 1,     dtype=np.float64)
+        K_all       = np.empty((s, Np1),    dtype=np.float64)
+        m_tot_all   = np.empty((s, Np1),    dtype=np.float64)
+        dummy       = np.empty((s, 2),      dtype=np.float64)
 
         eps_dr = 1e-10
         i = 0
@@ -623,6 +625,7 @@ class State:
             status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(
                 r_new, rho_new, p_new, m, m_bh, bkg_param,
                 a, b, c, y, xk, vol_old, K_all, m_tot_all,
+                ZERO_LUMINOSITY, dummy,
                 )
             
             if status == STATUS_SHELL_CROSSING:
@@ -684,7 +687,7 @@ class State:
         # Boundary temperatures, thermal reservoirs
         # Only used for thermal_boundary = FIXED_TEMPERATURE
         self.v2_bdy = self.v2[:, [0, -1]].copy() # Order is inner then outer
-        
+
         # Last accepted step and cumulative reservoir heat.
         # Positive q means energy supplied to stars; negative means energy removed.
         self.dq_res = np.zeros((config.s, 2), dtype=np.float64)
