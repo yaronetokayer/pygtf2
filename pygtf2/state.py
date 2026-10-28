@@ -681,6 +681,15 @@ class State:
         self._initialize_grid()
         self._ensure_hydrostatic_equilibrium()
 
+        # Boundary temperatures, thermal reservoirs
+        # Only used for thermal_boundary = FIXED_TEMPERATURE
+        self.v2_bdy = self.v2[:, [0, -1]].copy() # Order is inner then outer
+        
+        # Last accepted step and cumulative reservoir heat.
+        # Positive q means energy supplied to stars; negative means energy removed.
+        self.dq_res = np.zeros((config.s, 2), dtype=np.float64)
+        self.q_res  = np.zeros((config.s, 2), dtype=np.float64)
+
         self.t = 0.0                        # Current time in simulation units
         self.step_count = 0                 # Global integration step counter (never reset)
         self.snapshot_index = 0             # Counts profile output snapshots

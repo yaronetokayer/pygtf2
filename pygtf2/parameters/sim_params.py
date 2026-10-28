@@ -1,7 +1,9 @@
 import math
 
+THERMAL_BOUNDARY_STRINGS = ['zero_luminosity', 'fixed_temperature']
+
 class SimParams:
-    """
+    f"""
     Simulation control parameters.
 
     Attributes
@@ -21,6 +23,9 @@ class SimParams:
         Parameter beta from Zhong & Shapiro (2025; arXiv:2505.18251)
     m_bh : float
         Mass of central black hole in solar masses.
+    thermal_boundary : int
+        Conductivity boundary condition at inner and outer edges.
+        Options are {THERMAL_BOUNDARY_STRINGS}.
     evap : bool
         Reserved evaporation switch; the current integrator does not apply it.
     binaries : bool
@@ -40,17 +45,18 @@ class SimParams:
 
     def __init__(
             self, 
-            t_halt : float = 1000.0,
-            rho0_halt : float = 1.0e8,
-            lnL_param : float = 0.11,
-            alpha : float = 1.217,
-            beta : float = 1.0,
-            b : float = 0.44,
-            m_bh : float = 0.0,
-            evap : bool = False,
-            binaries : bool = False,
-            n_particle : int = 1e4,
-            bkg: dict | None = None,
+            t_halt              : float = 1000.0,
+            rho0_halt           : float = 1.0e8,
+            lnL_param           : float = 0.11,
+            alpha               : float = 1.217,
+            beta                : float = 1.0,
+            b                   : float = 0.44,
+            m_bh                : float = 0.0,
+            thermal_boundary    : str   = 'zero_luminosity',
+            evap                : bool  = False,
+            binaries            : bool  = False,
+            n_particle          : int   = 1e4,
+            bkg                 : dict | None = None,
     ):
         
         self._t_halt = None
@@ -60,6 +66,7 @@ class SimParams:
         self._beta = None
         self._b = None
         self._m_bh = None
+        self._thermal_boundary = None
         self._evap = None
         self._binaries = None
         self._n_particle = None
@@ -72,6 +79,7 @@ class SimParams:
         self.beta = beta
         self.b = b
         self.m_bh = m_bh
+        self.thermal_boundary = thermal_boundary
         self.evap = evap
         self.binaries = binaries
         self._n_particle = int(n_particle)
@@ -148,6 +156,16 @@ class SimParams:
         if not math.isfinite(value) or value < 0.0:
             raise ValueError("m_bh must be finite and non-negative")
         self._m_bh = float(value)
+
+    @property
+    def thermal_boundary(self):
+        return self._thermal_boundary
+
+    @thermal_boundary.setter
+    def thermal_boundary(self, value):
+        if value not in THERMAL_BOUNDARY_STRINGS:
+            raise ValueError(f"thermal_boundary options are {THERMAL_BOUNDARY_STRINGS}")
+        self._thermal_boundary = value
 
     @property
     def evap(self):

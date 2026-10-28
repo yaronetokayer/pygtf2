@@ -8,6 +8,8 @@ HEX_FIRST       = 0
 COND_FIRST      = 1
 STRANG_SPLIT    = 2
 
+ZERO_LUMINOSITY = 0; FIXED_TEMPERATURE = 1
+
 @njit(
     void(
         float64[:, :],  # v2
@@ -289,8 +291,30 @@ def build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     c[N - 1] = 0.0
     d[N - 1] = duR * inv_sqrt_suR
 
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64, float64[:], float64[:], float64[:], float64[:], float64, float64[:], float64[:, :], float64[:, :], float64), cache=True, fastmath=True)
+@njit(
+    void(
+        float64[:, :], 
+        float64[:, :], 
+        float64[:, :], 
+        float64[:, :], 
+        float64, 
+        types.int64, 
+        float64[:, :], 
+        float64[:, :], 
+        float64[:, :], 
+        float64[:], 
+        float64[:], 
+        float64[:], 
+        float64[:], 
+        float64, 
+        float64[:], 
+        float64[:, :], 
+        float64[:, :], 
+        float64),
+    cache=True, fastmath=True
+)
 def conduct_implicit(v2, rho, r, m, m_bh,
+                     thermal_boundary, v2_bdy, dq_res, q_res,
                      a, b, c, d, 
                      c2, mrat, lnL, du_trial, dt,):
     """
@@ -325,6 +349,20 @@ def conduct_implicit(v2, rho, r, m, m_bh,
         pref = c2 * (mrat[k] * lnL[k, k])
 
         build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt)
+
+        # build_tridiag_system uses a zero-luminosity BC
+        # for fixed termperature, we need to correct
+        if thermal_boundary == FIXED_TEMPERATURE:
+            a[0] = 0.0
+            b[0] = 1.0
+            c[0] = 0.0
+            d[0] = 1.5 * v2_bdy[k, 0] - uk[0]
+
+            a[N - 1] = 0.0
+            b[N - 1] = 1.0
+            c[N - 1] = 0.0
+            d[N - 1] = 1.5 * v2_bdy[k, 1] - uk[N - 1]
+
         solve_tridiagonal_thomas(a, b, c, d, du_trial[k])
 
     for k in range(s):
@@ -338,6 +376,10 @@ def conduct_implicit(v2, rho, r, m, m_bh,
         float64[:, :],  # r
         float64[:, :],  # m
         float64,        # m_bh
+        types.int64,     # thermal_boundary
+        float64[:, :],  # v2_bdy
+        float64[:, :],  # dq_res
+        float64[:, :],  # q_res
         float64,        # c1
         float64,        # c2
         float64[:],     # mrat
@@ -354,6 +396,7 @@ def conduct_implicit(v2, rho, r, m, m_bh,
 )
 def conduct_imex_once(
     v2, rho, r, m, m_bh,
+    thermal_boundary, v2_bdy, dq_res, q_res,
     c1, c2, mrat, lnL,
     v2_work, a_work, b_work, c_work, d_work,
     dt, order,
@@ -368,10 +411,14 @@ def conduct_imex_once(
     """
     if order == HEX_FIRST:
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
-        conduct_implicit(v2, rho, r, m, m_bh, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
+        conduct_implicit(v2, rho, r, m, m_bh, 
+                         thermal_boundary, v2_bdy, dq_res, q_res, 
+                         a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
 
     elif order == COND_FIRST:
-        conduct_implicit(v2, rho, r, m, m_bh, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
+        conduct_implicit(v2, rho, r, m, m_bh, 
+                         thermal_boundary, v2_bdy, dq_res, q_res, 
+                         a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
 
     elif order == STRANG_SPLIT:
@@ -380,7 +427,9 @@ def conduct_imex_once(
         # First half-step hex on initial state determines dt_eff
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
 
-        conduct_implicit(v2, rho, r, m, m_bh, a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt,)
+        conduct_implicit(v2, rho, r, m, m_bh, 
+                         thermal_boundary, v2_bdy, dq_res, q_res, 
+                         a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt,)
 
         # Recompute the second half-step on the updated state.
         hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)

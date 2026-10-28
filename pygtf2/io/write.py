@@ -260,8 +260,6 @@ def write_profile_snapshot(state, initialize=False):
     m_part = state.m_part
 
     # Compute luminosities on the fly
-    from pygtf2.evolve.transport import compute_luminosities
-
     lum = np.empty_like(state.r, dtype=np.float64)
 
     compute_luminosities(state.v2, state.rho, state.r, state.m, float(state.m_bh), float(state.char.c2), state.mrat, state.char.lnL,lum,)

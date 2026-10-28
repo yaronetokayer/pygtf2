@@ -1,6 +1,6 @@
 import numpy as np 
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
-from pygtf2.evolve.transport import conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT
+from pygtf2.evolve.transport import conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT, ZERO_LUMINOSITY, FIXED_TEMPERATURE
 from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi, STATUS_SHELL_CROSSING, STATUS_CAVITY_REACHED, STATUS_OK
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binary_heating
@@ -42,6 +42,10 @@ def run_until_stop(state, start_step, **kwargs):
     # Parameters
     c1 = float(char.c1); c2 = float(char.c2)
     eps_du = float(prec.eps_du); max_iter_du = prec.max_iter_du
+    if sim.thermal_boundary == 'zero_luminosity':
+        thermal_boundary = ZERO_LUMINOSITY
+    elif sim.thermal_boundary == 'fixed_temperature':
+        thermal_boundary = FIXED_TEMPERATURE
     mrat = state.mrat; lnL = char.lnL
     bkg_param = state.bkg_param
 
@@ -109,6 +113,7 @@ def run_until_stop(state, start_step, **kwargs):
             state, dt_prop, step_count,
             binaries, # evap,                                               # Switches
             eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param, n_particle,  # Parameters
+            thermal_boundary,
             work_sn1, work_sn2,                                             # Preallocated arrays
             work_snout1, work_snout2,
             work_n1, work_n2, work_n3, work_n4,
@@ -195,6 +200,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
                         binaries, # evap                            # Switches
                         eps_du, max_iter_du,
                         c1, c2, mrat, lnL, bkg_param, n_particle,   # Parameters
+                        thermal_boundary,
                         work_sn1, work_sn2,                         # Preallocated arrays
                         work_snout1, work_snout2,
                         work_n1, work_n2, work_n3, work_n4,
@@ -223,6 +229,8 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Model parameters.
     bkg_param : ndarray, shape (4,)
         Background potential parameters.
+    thermal_boundary : int
+        Option for thermal boundary condition in conduction solve
     n_particle : int
         Absolute particle number for heat generation due to binaries.
     work_sn1, work_sn2 : ndarray (s,N)
@@ -241,6 +249,10 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     m           = np.asarray(state.m,       dtype=np.float64)
     v2          = np.asarray(state.v2,      dtype=np.float64)
     rho         = np.asarray(state.rho,     dtype=np.float64)
+    # These are important for thermal_boundary = FIXED_TEMPERATURE
+    v2_bdy      = np.asarray(state.v2_bdy,  dtype=np.float64)
+    dq_res      = np.asarray(state.dq_res,  dtype=np.float64)
+    q_res       = np.asarray(state.q_res,   dtype=np.float64)
 
     ### Step 1: Energy transport ###
 
@@ -258,6 +270,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         order = STRANG_SPLIT
         conduct_imex_once(
             v2, rho, r, m, m_bh,
+            thermal_boundary, v2_bdy, dq_res, q_res,
             c1, c2, mrat, lnL,
             work_sn1, work_n1, work_n2, work_n3, work_n4,
             dt_trial, order,
