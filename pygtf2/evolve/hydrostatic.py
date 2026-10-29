@@ -8,6 +8,7 @@ from pygtf2.util.calc import add_bkg_pot, add_m_bh, solve_tridiagonal_thomas, ad
 STATUS_OK = 0
 STATUS_SHELL_CROSSING = 1
 STATUS_CAVITY_REACHED = 2
+STATUS_HE_FAILED = 3
 _TINY64 = np.finfo(np.float64).tiny
 
 @njit(void(float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
@@ -59,8 +60,8 @@ def _update_r_p_rho(r, x, p, rho, work):
         rho[j] *= ratio
         p[j] *= ratio ** gamma
 
-@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], types.int64), cache=True, fastmath=True)
-def _build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y, thermal_boundary):
+@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
+def _build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y):
     """
     Fill preallocated arrays a, b, c, y with the tridiagonal system
     for the interior fractional radius shifts.
@@ -86,9 +87,6 @@ def _build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y, thermal_boun
         Only interior values K_k[1:-1] are used.
     a, b, c, y : ndarray, shape (N-1,)
         Preallocated output arrays to fill in place.
-    thermal_boundary : int
-        Specifies thermal boundary condition.
-        For the FIXED_TEMPERATURE case, we need to account for pressure response of reservoir
     """
     tiny = _TINY64
 
@@ -134,17 +132,10 @@ def _build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y, thermal_boun
 
         dd = -(4.0 / Mi) * ((rC * rC) * inv_dr) * (dP / drho)
 
-        gamma3_L = 5.0
-        gamma3_R = 5.0
+        pressure_factor = -20.0 * rC * rC * inv_dr / (Mi * drho)
 
-        if thermal_boundary == FIXED_TEMPERATURE:
-            if j == 0:
-                gamma3_L = 3.0
-            if j + 1 == p.size - 1:
-                gamma3_R = 3.0
-
-        c1 = gamma3_R * dd * (p[j + 1] / dP) - 3.0 * (rho[j + 1] / drho)
-        c2 = gamma3_L * dd * (p[j] / dP)     + 3.0 * (rho[j] / drho)
+        c1 = pressure_factor * p[j + 1] - 3.0 * rho[j + 1] / drho
+        c2 = pressure_factor * p[j]     + 3.0 * rho[j]     / drho
 
         # Extra term to account for shifting M_other grid
         lam = rC * K_k[iC] / Mi
@@ -283,14 +274,12 @@ def compute_he_pressures_with_resid(r, rho, p, m, m_bh, bkg_param):
         float64[:],    # vol_old
         float64[:, :], # K_all
         float64[:, :], # m_tot_all
-        types.int64,   # thermal_boundary
     ), 
     cache=True, fastmath=True,
 )
 def revirialize_interp_jacobi(
     r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
-    thermal_boundary,
     ) -> int:
     """
     Multi-species re-virialization, Jacobi-style in the inter-species coupling.
@@ -320,8 +309,6 @@ def revirialize_interp_jacobi(
         Scratch array for old shell volumes.
     K_all, m_tot_all : ndarray, shape (s, N+1)
         Scratch arrays for other-mass derivatives and total enclosed masses.
-    thermal_boundary : int
-        Specifies conduction boundary condition.
 
     Returns
     -------
@@ -347,7 +334,7 @@ def revirialize_interp_jacobi(
     # Pass 2: solve for all species, but no update yet
     xk_all = np.empty((s, Np1 - 2), dtype=np.float64)
     for k in range(s):
-        _build_tridiag_system_mother(r[k], rho[k], p[k], m_tot_all[k], K_all[k], a, b, c, y, thermal_boundary)
+        _build_tridiag_system_mother(r[k], rho[k], p[k], m_tot_all[k], K_all[k], a, b, c, y)
         solve_tridiagonal_thomas(a, b, c, y, xk)
 
         # Check whether the first shell enters cavity 
@@ -386,14 +373,12 @@ def revirialize_interp_jacobi(
         float64[:],    # vol_old
         float64[:, :], # K_all
         float64[:, :], # m_tot_all
-        types.int64,   # thermal_boundary
     ), 
     cache=True, fastmath=True
 )
 def revirialize_interp_jacobi_diagnostics(
     r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
-    thermal_boundary, 
     ) -> tuple:
     """
     Apply Jacobi-style multi-species revirialization and return diagnostics.
@@ -423,10 +408,6 @@ def revirialize_interp_jacobi_diagnostics(
         Scratch array for old shell volumes.
     K_all, m_tot_all : ndarray, shape (s, N+1)
         Scratch arrays for other-mass derivatives and total enclosed masses.
-    thermal_boundary : int
-        Specifies conduction boundary condition.
-        Since this routine is only used for initialization,
-        this should always be passed as ZERO_LUMINOSITY
 
     Returns
     -------
@@ -462,7 +443,7 @@ def revirialize_interp_jacobi_diagnostics(
     # Pass 2: solve for all species, but no update yet
     xk_all = np.empty((s, Np1 - 2), dtype=np.float64)
     for k in range(s):
-        _build_tridiag_system_mother(r[k], rho[k], p[k], m_tot_all[k], K_all[k], a, b, c, y, thermal_boundary)
+        _build_tridiag_system_mother(r[k], rho[k], p[k], m_tot_all[k], K_all[k], a, b, c, y)
         solve_tridiagonal_thomas(a, b, c, y, xk)
 
         # Check whether the first shell enters cavity 
@@ -490,3 +471,120 @@ def revirialize_interp_jacobi_diagnostics(
     he_res = _compute_he_resid_norm(r, rho, p, m, m_bh, bkg_param)
 
     return STATUS_OK, dr_max, he_res
+
+@njit(
+    int64(
+        float64[:, :], float64[:, :], float64[:, :], float64[:, :],
+        float64, float64[:],
+        float64[:], float64[:], float64[:], float64[:], float64[:], float64[:],
+        float64[:, :], float64[:, :],
+    ),
+    cache=True,
+)
+def revirialize_interp_jacobi_converged(
+    r, rho, p, m, m_bh, bkg_param,
+    a, b, c, y, xk, vol_old, K_all, m_tot_all,
+):
+    """
+    Damped adiabatic HE solve. Physical input arrays change only on success.
+
+    Residual tolerance uses the L2 norm.
+    """
+    s, Np1 = r.shape
+    r_iter = r.copy()
+    rho_iter = rho.copy()
+    p_iter = p.copy()
+    r_test = np.empty_like(r)
+    rho_test = np.empty_like(rho)
+    p_test = np.empty_like(p)
+    xk_all = np.empty((s, Np1 - 2), dtype=np.float64)
+
+    if (not np.all(np.isfinite(r_iter)) or not np.all(np.isfinite(rho_iter))
+        or not np.all(np.isfinite(p_iter)) or np.any(rho_iter <= 0.0)
+        or np.any(p_iter <= 0.0)):
+        return STATUS_HE_FAILED
+    for k in range(s):
+        if r_iter[k, 0] < 0.0:
+            return STATUS_HE_FAILED
+        for i in range(Np1 - 1):
+            if r_iter[k, i + 1] <= r_iter[k, i]:
+                return STATUS_HE_FAILED
+
+    resid = _compute_he_resid_norm(r_iter, rho_iter, p_iter, m, m_bh, bkg_param)
+    if not np.isfinite(resid):
+        return STATUS_HE_FAILED
+
+    for iteration in range(80):
+        if resid < 1.0e-9:
+            r[:, :] = r_iter
+            rho[:, :] = rho_iter
+            p[:, :] = p_iter
+            return STATUS_OK
+
+        # Freeze all species grids while building this Jacobi correction.
+        for k in range(s):
+            interp_m_enc_and_K(k, r_iter, m, m_tot_all[k], K_all[k])
+            if bkg_param[0] != -1:
+                add_bkg_pot(r_iter[k], bkg_param, m_tot_all[k])
+                add_bkg_K(r_iter[k], bkg_param, K_all[k])
+            if m_bh != 0.0:
+                add_m_bh(r_iter[k], m_bh, m_tot_all[k])
+
+        for k in range(s):
+            _build_tridiag_system_mother(r_iter[k], rho_iter[k], p_iter[k], m_tot_all[k], K_all[k], a, b, c, y,)
+            solve_tridiagonal_thomas(a, b, c, y, xk)
+            xk_all[k, :] = xk
+        
+        if not np.all(np.isfinite(xk_all)):
+            return STATUS_HE_FAILED
+
+        # Limit displacements relative to shell widths
+        move_ratio = 0.0
+        for k in range(s):
+            for j in range(Np1 - 2):
+                i = j + 1
+                width = min(r_iter[k,i] - r_iter[k,i-1], r_iter[k,i+1] - r_iter[k,i])
+                move_ratio = max(move_ratio, abs(r_iter[k,i] * xk_all[k,j]) / width)
+        factor = min(1.0, 0.2 / max(move_ratio, 1.0e-30))
+
+        accepted = False
+        for backtrack in range(20):
+            # Validate ALL proposed species grids before updating any density.
+            r_test[:, :] = r_iter
+            for k in range(s):
+                for j in range(Np1 - 2):
+                    r_test[k,j+1] = r_iter[k,j+1] * (1.0 + factor * xk_all[k,j])
+            valid = np.all(np.isfinite(r_test))
+            for k in range(s):
+                for i in range(Np1 - 1):
+                    if r_test[k,i+1] <= r_test[k,i]:
+                        valid = False
+            if valid:
+                r_test[:, :] = r_iter
+                rho_test[:, :] = rho_iter
+                p_test[:, :] = p_iter
+                for k in range(s):
+                    xk[:] = factor * xk_all[k]
+                    _update_r_p_rho(r_test[k], xk, p_test[k], rho_test[k], vol_old)
+                valid = (np.all(np.isfinite(rho_test)) and np.all(np.isfinite(p_test))
+                         and np.all(rho_test > 0.0) and np.all(p_test > 0.0))
+                if valid:
+                    resid_new = _compute_he_resid_norm(r_test, rho_test, p_test, m, m_bh, bkg_param,)
+                    if np.isfinite(resid_new) and resid_new < resid:
+                        r_iter[:, :] = r_test
+                        rho_iter[:, :] = rho_test
+                        p_iter[:, :] = p_test
+                        resid = resid_new
+                        accepted = True
+                        break
+            factor *= 0.5
+        if not accepted:
+            return STATUS_HE_FAILED
+
+    # Allow convergence on the final permitted correction.
+    if resid < 1.0e-9:
+        r[:, :] = r_iter
+        rho[:, :] = rho_iter
+        p[:, :] = p_iter
+        return STATUS_OK
+    return STATUS_HE_FAILED

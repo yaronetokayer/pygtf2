@@ -6,6 +6,43 @@ from pygtf2.profiles.bkg_pot import hernq_static_scalar
 CORE_HALF_RHO0 = 0
 CORE_SPITZER87 = 1
 
+def remap_if_needed(r, rho, p, m):
+    """Conserve shell mass/internal energy on a logarithmic cavity grid.
+
+    Return (valid, changed). A False return requires whole-timestep rollback.
+    p/rho is used because v2 is stale until the timestep is committed.
+    """
+    changed = False
+    s, Np1 = r.shape
+    for k in range(s):
+        if r[k, 0] <= 0.0:
+            continue  # No logarithmic remap of an origin-containing grid.
+        if np.max(r[k, 1:] / r[k, :-1]) <= 1.3:
+            continue
+
+        rn = np.geomspace(r[k, 0], r[k, -1], Np1)
+        dm = np.diff(m[k])
+        U = np.empty(Np1, dtype=np.float64)
+        U[0] = 0.0
+        U[1:] = np.cumsum(1.5 * dm * p[k] / rho[k])
+        mn = np.interp(rn**3, r[k]**3, m[k])
+        Un = np.interp(rn**3, r[k]**3, U)
+        dmn = np.diff(mn)
+        dUn = np.diff(Un)
+        if (not np.all(np.isfinite(dmn)) or not np.all(np.isfinite(dUn))
+            or np.any(dmn <= 0.0) or np.any(dUn <= 0.0)):
+            return False, changed
+        rhon = 3.0 * dmn / np.diff(rn**3)
+        pn = (2.0 / 3.0) * rhon * dUn / dmn
+        if not np.all(np.isfinite(rhon)) or not np.all(np.isfinite(pn)):
+            return False, changed
+        r[k] = rn
+        m[k] = mn
+        rho[k] = rhon
+        p[k] = pn
+        changed = True
+    return True, changed
+
 @njit(void(float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True)
 def solve_tridiagonal_thomas(a, b, c, y, x):
     """

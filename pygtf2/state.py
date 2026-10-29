@@ -586,7 +586,6 @@ class State:
         and then reconstruct the interior pressure using the full gravitational field.
         """
         from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING, STATUS_CAVITY_REACHED
-        from pygtf2.evolve.transport import ZERO_LUMINOSITY
         chatter = self.config.io.chatter
         bkg_param = self.bkg_param
 
@@ -624,7 +623,6 @@ class State:
             status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(
                 r_new, rho_new, p_new, m, m_bh, bkg_param,
                 a, b, c, y, xk, vol_old, K_all, m_tot_all,
-                ZERO_LUMINOSITY,
                 )
             
             if status == STATUS_SHELL_CROSSING:

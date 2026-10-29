@@ -1,11 +1,11 @@
 import numpy as np 
 from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
 from pygtf2.evolve.transport import conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT, ZERO_LUMINOSITY, FIXED_TEMPERATURE
-from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi, STATUS_SHELL_CROSSING, STATUS_CAVITY_REACHED, STATUS_OK
+from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi, revirialize_interp_jacobi_converged, STATUS_SHELL_CROSSING, STATUS_CAVITY_REACHED, STATUS_OK
 from pygtf2.evolve.evaporate import evaporate
 from pygtf2.evolve.binaries import binary_heating
 from pygtf2.util.interpolate import sum_intensive_loglog_single
-from pygtf2.util.calc import calc_r50_spread
+from pygtf2.util.calc import calc_r50_spread, remap_if_needed
 from pygtf2.util.little_helpers import max_frac_change
 from pygtf2.dev.debug import plot_r_markers
 
@@ -62,6 +62,9 @@ def run_until_stop(state, start_step, **kwargs):
     work_sn2            = np.empty_like(state.rho,  dtype=np.float64)
     work_snout1         = np.empty_like(state.m,    dtype=np.float64)
     work_snout2         = np.empty_like(state.m,    dtype=np.float64)
+    r_old               = np.empty_like(state.r,    dtype=np.float64)
+    rho_old             = np.empty_like(state.rho,  dtype=np.float64)
+    m_old               = np.empty_like(state.m,    dtype=np.float64)
     work_n1             = np.empty(N,               dtype=np.float64)
     work_n2             = np.empty(N,               dtype=np.float64)
     work_n3             = np.empty(N,               dtype=np.float64)
@@ -109,6 +112,11 @@ def run_until_stop(state, start_step, **kwargs):
         if step_count == 1:
             dt_prop = 1.0 # We have no maxdu yet
 
+        elif thermal_boundary == FIXED_TEMPERATURE:
+            err = eps_du / max(state.du_max, 1e-30)
+            fac = min(1.3, max(0.7, 0.9 * err))
+            dt_prop = fac * state.dt
+
         else:         
             #--- du-limited dt using proportional control
             err = eps_du / state.du_max
@@ -125,7 +133,7 @@ def run_until_stop(state, start_step, **kwargs):
             work_snout1, work_snout2,
             work_n1, work_n2, work_n3, work_n4,
             work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
-            dq_res_trial,
+            dq_res_trial, r_old, rho_old, m_old,
         )
 
         if status == STATUS_CAVITY_REACHED:
@@ -213,7 +221,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
                         work_snout1, work_snout2,
                         work_n1, work_n2, work_n3, work_n4,
                         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
-                        dq_res_trial,
+                        dq_res_trial, r_old, rho_old, m_old,
                         ):
     """
     Advance state by one time step.
@@ -269,17 +277,26 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     ### Step 1: Energy transport ###
 
     # Save initial state
-    work_sn2[:,:]   = v2
+    r_old[:, :]     = r
+    rho_old[:, :]   = rho
+    m_old[:, :]     = m
+    work_sn2[:, :] = v2
 
-    dt_trial = dt_prop
-    iter_du = -1
+    dt_trial        = float(dt_prop)
+    accepted        = False
+    failure         = 'no trial attempted'
 
     for j in range(max_iter_du):
-        if j > 0:  # start from initial state
-            v2[:,:] = work_sn2
-        # Reset changes to heat reservoirs
-        if thermal_boundary == FIXED_TEMPERATURE:
-            dq_res_trial[:, :]      = 0.0
+        # start from initial state
+        r[:, :]             = r_old
+        rho[:, :]           = rho_old
+        m[:, :]             = m_old
+        v2[:, :]            = work_sn2
+        dq_res_trial[:, :]  = 0.0
+
+        if not np.isfinite(dt_trial) or dt_trial <= 0.0 or state.t + dt_trial == state.t:
+            failure = 'timestep cannot advance time'
+            break
 
         # IMEX METHOD
         order = STRANG_SPLIT
@@ -291,45 +308,96 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
             dt_trial, order,
         )
 
+        # Check for failure in v2 update
+        if not np.all(np.isfinite(v2)) or np.any(v2 <= 0.0):
+            failure = 'invalid transport temperature'
+            dt_trial *= 0.25
+            continue
+
         # Other energy modules can be added here
         if binaries:
             binary_heating(rho, v2, r, dt_trial, mrat, n_particle)
+            # Check for failure in v2 update
+            if not np.all(np.isfinite(v2)) or np.any(v2 <= 0.0):
+                failure = 'invalid heated temperature'
+                dt_trial *= 0.25
+                continue
 
         du_max = max_frac_change(v2, work_sn2)
 
-        if du_max <= eps_du:
-            iter_du = j
-            break
+        # Check timestep criterion
+        if not np.isfinite(du_max):
+            failure = 'nonfinite fractional change'
+            dt_trial *= 0.25
+            continue
+        if du_max > eps_du:
+            failure = 'transport change too large'
+            dt_trial *= 0.95 * eps_du / du_max
+            continue
 
-        dt_trial *= 0.95 * eps_du / du_max
+        # Apply evaporation
+        # if evap:
+        #     evaporate(r, rmid_orig, m, v2_cond, rho, dt_prop) # Modifies rho and m in place
+        #     p = v2_cond * rho
 
-    if iter_du == -1:
-        v2[:,:] = work_sn2
-        raise RuntimeError(f"Step {step_count}: Max iterations exceeded in conduction step.")
+        np.multiply(rho, v2, out=work_sn1) # work_sn1 used for p
 
-    dt_prop = dt_trial
-
-    # Apply evaporation
-    # if evap:
-    #     evaporate(r, rmid_orig, m, v2_cond, rho, dt_prop) # Modifies rho and m in place
-    #     p = v2_cond * rho
-
-    np.multiply(rho, v2, out=work_sn1) # work_sn1 used for p
-
-    ### Step 2: Reestablish hydrostatic equilibrium ###
-    status = revirialize_interp_jacobi(
-        r, rho, work_sn1, m, m_bh, bkg_param,
-        work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
-        work_n1, work_snout2, work_snout1,
-        thermal_boundary
+        ### Step 2: Reestablish hydrostatic equilibrium ###
+        # Choose revirialization technique based on boundary condition
+        hydro = (revirialize_interp_jacobi_converged if thermal_boundary == FIXED_TEMPERATURE else revirialize_interp_jacobi)
+        status = hydro(
+            r, rho, work_sn1, m, m_bh, bkg_param,
+            work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
+            work_n1, work_snout2, work_snout1,
         ) # Modifies r, rho, p in place
 
-    if status == STATUS_SHELL_CROSSING:
-        raise RuntimeError(f"Step {step_count}: Shell crossing in conduction/revirialization step.")
+        if status == STATUS_CAVITY_REACHED and thermal_boundary != FIXED_TEMPERATURE:
+            r[:, :]             = r_old
+            rho[:, :]           = rho_old
+            m[:, :]             = m_old
+            v2[:, :]            = work_sn2
+            dq_res_trial[:, :]  = 0.0
+            return STATUS_CAVITY_REACHED
 
-    elif status == STATUS_CAVITY_REACHED:
-        v2[:,:] = work_sn2 # Restore latest v2
-        return STATUS_CAVITY_REACHED
+        if status != STATUS_OK:
+            failure = 'hydrostatic solve failed'
+            dt_trial *= 0.25
+            continue
+
+        if thermal_boundary == FIXED_TEMPERATURE and step_count % 25 == 0:
+            valid, changed = remap_if_needed(r, rho, work_sn1, m)
+            if not valid:
+                failure = 'invalid remap'
+                dt_trial *= 0.25
+                continue
+            if changed:
+                status = revirialize_interp_jacobi_converged(
+                    r, rho, work_sn1, m, m_bh, bkg_param,
+                    work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
+                    work_n1, work_snout2, work_snout1,
+                )
+                if status != STATUS_OK:
+                    failure = 'hydrostatic solve after remap failed'
+                    dt_trial *= 0.25
+                    continue
+
+        if (not np.all(np.isfinite(work_sn1)) or np.any(work_sn1 <= 0.0)
+            or not np.all(np.isfinite(rho)) or np.any(rho <= 0.0)
+            or not np.all(np.isfinite(work_sn1 / rho))
+            or not np.all(np.isfinite(dq_res_trial))):
+            failure = 'invalid final state'
+            dt_trial *= 0.25
+            continue
+        accepted = True
+        break
+
+    if not accepted:
+        r[:, :]             = r_old
+        rho[:, :]           = rho_old
+        m[:, :]             = m_old
+        v2[:, :]            = work_sn2
+        dq_res_trial[:, :]  = 0.0
+        raise RuntimeError(f'Step {step_count}: {failure}; no trial accepted.')
 
     ### Step 3: Update state variables ###
 
@@ -347,13 +415,13 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     state.r50_spread    = calc_r50_spread(r, m, state.r50evo)
 
     # Diagnostics
-    state.n_iter_du     += iter_du
-    state.dt_cum        += float(dt_prop)
+    state.n_iter_du     += j
+    state.dt_cum        += float(dt_trial)
     state.du_max_cum    += float(du_max)
 
     state.du_max  = float(du_max)
-    state.dt = float(dt_prop)
-    state.t += float(dt_prop)
+    state.dt = float(dt_trial)
+    state.t += float(dt_trial)
 
     if thermal_boundary == FIXED_TEMPERATURE:
         state.q_res[:, :] += dq_res_trial
