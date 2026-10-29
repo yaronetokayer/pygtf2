@@ -4,6 +4,7 @@ from numba import njit, float64, types, void, int64
 from pygtf2.evolve.transport import ZERO_LUMINOSITY, FIXED_TEMPERATURE
 from pygtf2.util.interpolate import interp_m_enc, interp_m_enc_and_K
 from pygtf2.util.calc import add_bkg_pot, add_m_bh, solve_tridiagonal_thomas, add_bkg_K
+from pygtf2.util.fixed_temp import add_pdv_to_reservoir
 
 STATUS_OK = 0
 STATUS_SHELL_CROSSING = 1
@@ -298,6 +299,8 @@ def compute_he_pressures_with_resid(r, rho, p, m, m_bh, bkg_param):
         float64[:, :], # m_tot_all
         types.int64,   # thermal_boundary
         float64[:, :], # v2_bdy
+        float64[:, :], # dq_res_trial
+        float64[:, :], # dq_res_abs_trial
     ), 
     cache=True, fastmath=True,
 )
@@ -305,6 +308,7 @@ def revirialize_interp_jacobi(
     r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
     thermal_boundary, v2_bdy,
+    dq_res_trial, dq_res_abs_trial,
     ) -> int:
     """
     Multi-species re-virialization, Jacobi-style in the inter-species coupling.
@@ -338,6 +342,10 @@ def revirialize_interp_jacobi(
         Specifies conduction boundary condition.
     v2_bdy : ndarray, shape (s, 2)
         Fixed temperatures at the boundaries
+    dq_res_trial : ndarray, shape (s, 2)
+        Reservoir heat tracker
+    dq_res_abs_trial : ndarray, shape (s, 2)
+        Reservoir heat tracker, absolute value
 
     Returns
     -------
@@ -383,6 +391,9 @@ def revirialize_interp_jacobi(
         for i in range(1, Np1 - 1):
             if r[k, i + 1] - r[k, i] <= 0.0:
                 return STATUS_SHELL_CROSSING
+
+        if thermal_boundary == FIXED_TEMPERATURE: # Account for pdv work on reservoir
+            add_pdv_to_reservoir(r, m, v2_bdy, vol_old, dq_res_trial, dq_res_abs_trial, k, Np1 - 1)
 
     return STATUS_OK
 
@@ -442,6 +453,8 @@ def revirialize_interp_jacobi_diagnostics(
         Scratch arrays for other-mass derivatives and total enclosed masses.
     thermal_boundary : int
         Specifies conduction boundary condition.
+        Since this routine is only used for initialization,
+        this should always be passed as ZERO_LUMINOSITY
     v2_bdy : ndarray, shape (s, 2)
         Fixed temperatures at the boundaries
 

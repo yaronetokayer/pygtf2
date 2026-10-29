@@ -68,6 +68,7 @@ def run_until_stop(state, start_step, **kwargs):
     work_nin5           = np.empty(Nm1,             dtype=np.float64)
     dq_res_trial        = np.empty((s, 2),          dtype=np.float64)
     dq_res_abs_trial    = np.empty((s, 2),          dtype=np.float64)
+    r_old               = np.empty_like(state.r,    dtype=np.float64)
 
     # Output options
     t_evol = bool(io.t_evol); profiles = bool(io.profiles)
@@ -118,7 +119,7 @@ def run_until_stop(state, start_step, **kwargs):
             eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param, n_particle,  # Parameters
             thermal_boundary,
             work_sn1, work_sn2,                                             # Preallocated arrays
-            work_snout1, work_snout2,
+            work_snout1, work_snout2, r_old,
             work_n1, work_n2, work_n3, work_n4,
             work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
             dq_res_trial, dq_res_abs_trial,
@@ -206,7 +207,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
                         c1, c2, mrat, lnL, bkg_param, n_particle,   # Parameters
                         thermal_boundary,
                         work_sn1, work_sn2,                         # Preallocated arrays
-                        work_snout1, work_snout2,
+                        work_snout1, work_snout2, r_old,
                         work_n1, work_n2, work_n3, work_n4,
                         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
                         dq_res_trial, dq_res_abs_trial,
@@ -240,7 +241,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Absolute particle number for heat generation due to binaries.
     work_sn1, work_sn2 : ndarray (s,N)
         Memory allocation for working arrays
-    work_snout1, work_snout2 : ndarray (s,N+1)
+    work_snout1, work_snout2, r_old : ndarray (s,N+1)
         Total enclosed mass and other-species mass-derivative workspaces,
         respectively, for revirialization.
     work_n1, work_n2, work_n3, work_n4 : ndarray (N,)
@@ -256,7 +257,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     m           = np.asarray(state.m,       dtype=np.float64)
     v2          = np.asarray(state.v2,      dtype=np.float64)
     rho         = np.asarray(state.rho,     dtype=np.float64)
-    # These are important for thermal_boundary = FIXED_TEMPERATURE
+    # These are needed for thermal_boundary = FIXED_TEMPERATURE
     v2_bdy      = np.asarray(state.v2_bdy,  dtype=np.float64)
     dq_res      = np.asarray(state.dq_res,  dtype=np.float64)
     q_res       = np.asarray(state.q_res,   dtype=np.float64)
@@ -264,7 +265,8 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     ### Step 1: Energy transport ###
 
     # Save initial state
-    work_sn2[:,:] = v2
+    work_sn2[:,:]   = v2
+    r_old[:, :]     = r
 
     dt_trial = dt_prop
     iter_du = -1
@@ -318,6 +320,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
         work_n1, work_snout2, work_snout1,
         thermal_boundary, v2_bdy,
+        dq_res_trial, dq_res_abs_trial
         ) # Modifies r, rho, p in place
 
     if status == STATUS_SHELL_CROSSING:
@@ -350,5 +353,9 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
     state.du_max  = float(du_max)
     state.dt = float(dt_prop)
     state.t += float(dt_prop)
+
+    if thermal_boundary == FIXED_TEMPERATURE:
+        state.dq_res[:, :] = dq_res_trial
+        state.q_res[:, :] += dq_res_trial
 
     return STATUS_OK

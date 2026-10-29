@@ -3,6 +3,7 @@ from numba import njit, float64, types, void
 import math
 from pygtf2.util.interpolate import interp_linear_to_interfaces, interp_m_enc
 from pygtf2.util.calc import solve_tridiagonal_thomas
+from pygtf2.util.fixed_temp import adjust_tridiag_system_fixed_temp, accumulate_reservoir_heat, restore_boundary_v2
 
 HEX_FIRST       = 0
 COND_FIRST      = 1
@@ -71,103 +72,6 @@ def compute_luminosities(v2, rho, r, m, m_bh, c2, mrat, lnL, lum,):
             lum[k, i] = (
                 -sqrt2 * pref * coef * du / math.sqrt(su)
             )
-
-@njit(float64(float64, float64, float64, float64, float64, float64,), cache=True, fastmath=True,)
-def _linearized_interface_luminosity(coef, pref, uL, uR, duL, duR,):
-    """
-    Conductive luminosity linearized about the pre-solve energies.
-    This is used for the FIXED_TEMPERATURE boundary condition
-
-    coef includes interface density, the BH limiter, r**2,
-    and the inverse distance between cell centers.
-    """
-    sqrt2 = 1.41421356237309
-
-    su = uL + uR
-    diff = uR - uL
-
-    inv_sqrt_su = 1.0 / math.sqrt(su)
-    inv_su32 = inv_sqrt_su / su
-
-    common_p = inv_sqrt_su + 0.5 * diff * inv_su32
-    common_m = inv_sqrt_su - 0.5 * diff * inv_su32
-
-    return sqrt2 * pref * coef * (
-        -diff * inv_sqrt_su
-        + common_p * duL
-        - common_m * duR
-    )
-
-@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:,:], float64[:], types.int64, types.int64), cache=True, fastmath=True)
-def _adjust_tridiag_system_fixed_temp(a, b, c, d, v2_bdy, uk, k, N):
-    """
-    Adjust the tridiagonal system for fixed-temperature boundary conditions.
-    """
-    a[0] = 0.0
-    b[0] = 1.0
-    c[0] = 0.0
-    d[0] = 1.5 * v2_bdy[k, 0] - uk[0]
-
-    a[N - 1] = 0.0
-    b[N - 1] = 1.0
-    c[N - 1] = 0.0
-    d[N - 1] = 1.5 * v2_bdy[k, 1] - uk[N - 1]
-
-@njit(void(float64[:, :], float64[:, :], float64[:], float64[:], float64[:], float64[:], float64[:, :], float64, float64, types.int64, types.int64), cache=True, fastmath=True)
-def _accumulate_reservoir_heat(dq_res_trial, dq_res_abs_trial, rk, mk, rhok_int, uk, du_trial, pref, dt, k, N):
-    """
-    Accumulate the heat exchanged with the reservoirs at the boundaries
-    """
-    for side in range(2):
-        if side == 0:
-            j = 0
-            cell = 0
-        else:
-            j = N - 2
-            cell = N - 1
-
-        i = j + 1
-
-        drc = 0.5 * (rk[i + 1] - rk[i - 1])
-        coef = rhok_int[j] * rk[i] * rk[i] / drc
-
-        lum_lin = _linearized_interface_luminosity(
-            coef, pref,
-            uk[j], uk[j + 1],
-            du_trial[k, j], du_trial[k, j + 1],
-        )
-
-        dm = mk[cell + 1] - mk[cell]
-        dq = dm * du_trial[k, cell]
-
-        if side == 0:
-            dq += dt * lum_lin
-        else:
-            dq -= dt * lum_lin
-
-        dq_res_trial[k, side] += dq
-        dq_res_abs_trial[k, side] += abs(dq)
-
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:, :],), cache=True, fastmath=True,)
-def _restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,):
-    """
-    Heat exchange and binary heating can change the boundary temperatures independently of conduction.
-    For a FIXED_TEMPERATURE thermal boundary, we want to restore this.
-    """
-    s, N = v2.shape
-
-    for k in range(s):
-        for side in range(2):
-            cell = 0 if side == 0 else N - 1
-
-            dm = m[k, cell + 1] - m[k, cell]
-            delta = v2_bdy[k, side] - v2[k, cell]
-            dq = 1.5 * dm * delta
-
-            dq_res_trial[k, side] += dq
-            dq_res_abs_trial[k, side] += abs(dq)
-
-            v2[k, cell] = v2_bdy[k, side]
 
 @njit(void(float64[:, :], float64[:, :],float64[:, :], float64[:], float64[:, :],float64[:, :], float64, float64), cache=True, fastmath = True)
 def _hex_explicit(v2, rho, lnL, mrat, r, v2_hex_src_work, dt, c1):
@@ -447,12 +351,12 @@ def _conduct_implicit(v2, rho, r, m, m_bh,
         # build_tridiag_system uses a zero-luminosity BC
         # for fixed termperature, we need to correct
         if thermal_boundary == FIXED_TEMPERATURE:
-            _adjust_tridiag_system_fixed_temp(a, b, c, d, v2_bdy, uk, k, N)
+            adjust_tridiag_system_fixed_temp(a, b, c, d, v2_bdy, uk, k, N)
 
         solve_tridiagonal_thomas(a, b, c, d, du_trial[k])
 
         if thermal_boundary == FIXED_TEMPERATURE:
-            _accumulate_reservoir_heat(dq_res_trial, dq_res_abs_trial, rk, mk, rhok_int, uk, du_trial, pref, dt, k, N)
+            accumulate_reservoir_heat(dq_res_trial, dq_res_abs_trial, rk, mk, rhok_int, uk, du_trial, pref, dt, k, N)
 
     for k in range(s):
         for i in range(N):
@@ -501,7 +405,7 @@ def conduct_imex_once(
     if order == HEX_FIRST:
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
         if thermal_boundary == FIXED_TEMPERATURE:
-            _restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
         _conduct_implicit(v2, rho, r, m, m_bh, 
                          thermal_boundary, v2_bdy, dq_res_trial, dq_res_abs_trial, 
                          a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
@@ -512,7 +416,7 @@ def conduct_imex_once(
                          a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
         if thermal_boundary == FIXED_TEMPERATURE:
-            _restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
 
     elif order == STRANG_SPLIT:
         half_dt = 0.5 * dt
@@ -520,7 +424,7 @@ def conduct_imex_once(
         # First half-step hex on initial state determines dt_eff
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
         if thermal_boundary == FIXED_TEMPERATURE:
-            _restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
 
         _conduct_implicit(v2, rho, r, m, m_bh, 
                          thermal_boundary, v2_bdy, dq_res_trial, dq_res_abs_trial,
@@ -529,7 +433,7 @@ def conduct_imex_once(
         # Recompute the second half-step on the updated state.
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
         if thermal_boundary == FIXED_TEMPERATURE:
-            _restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
 
     else:
         raise ValueError("unrecognized order code in conduction step")

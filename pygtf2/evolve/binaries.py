@@ -1,5 +1,7 @@
 import numpy as np
 from numba import njit, float64, int64, types
+from transport import ZERO_LUMINOSITY, FIXED_TEMPERATURE
+from pygtf2.util.fixed_temp import restore_boundary_v2
 
 @njit(
     types.void(
@@ -9,6 +11,11 @@ from numba import njit, float64, int64, types
         float64,         # dt
         float64[:],      # m_part
         int64,           # n_particles
+        int64,           # thermal_boundary
+        float64[:, :],   # m
+        float64[:, :],   # v2_bdy
+        float64[:, :],   # dq_res_trial
+        float64[:, :],   # dq_res_abs_trial
     ),
     cache=True,
     fastmath=True,
@@ -20,6 +27,11 @@ def binary_heating(
     dt: float,
     m_part: np.ndarray,
     n_particles: int,
+    thermal_boundary : int,
+    m: np.ndarray, 
+    v2_bdy : np.ndarray, 
+    dq_res_trial : np.ndarray, 
+    dq_res_abs_trial : np.ndarray,
 ) -> None:
     """
     Apply heating from three-body binary formation using the
@@ -53,6 +65,16 @@ def binary_heating(
         Relative particle masses m_k / m_1, with shape (n_species,).
     n_particles : int
         Total number of particles represented by the system.
+    thermal_boundary : int
+        Option for thermal boundary condition
+    m : ndarray
+        Species edge enclose mass profile, needed for thermal_boundary == FIXED_TEMPERATURE
+    v2_bdy : ndarray
+        Boundary fixed temperatures, needed for thermal_boundary == FIXED_TEMPERATURE
+    dq_res_trial : ndarray
+        Tracks thermal reservoir, needed for thermal_boundary == FIXED_TEMPERATURE
+    dq_res_trial : ndarray
+        Tracks thermal reservoir, needed for thermal_boundary == FIXED_TEMPERATURE   
 
     Returns
     -------
@@ -375,39 +397,5 @@ def binary_heating(
 
             v2[k, j] += (2.0 / 3.0) * dt * du_dt
 
-# import numpy as np
-# from pygtf2.util.interpolate import sum_intensive_loglog
-# from numba import njit, types, float64
-
-# @njit(types.Tuple((float64[:,:], float64[:,:], float64))(float64[:,:], float64[:,:], float64[:,:], float64),
-#     fastmath=True,cache=True)
-# def binaries_heating(rmid, rho, v2, dt):
-#     s, N = rmid.shape
-    
-#     # Constants, see e.g., Bettwieser (1985MNRAS.215..499B)
-#     pow = 2.0
-#     c = 1.0e-9 # arbitrary right now
-#     l = 1.0
-
-#     v2_new  = np.zeros_like(v2, dtype=np.float64)
-#     p_new   = np.zeros_like(v2, dtype=np.float64)
-#     eps_max = 0.0
-
-#     # per species update
-#     for k in range(s):
-#         if s == 1:
-#             rho_tot = rho[k]
-#             v2_tot  = v2[k]
-#         else:
-#             rmidk   = rmid[k]
-#             rho_tot = sum_intensive_loglog(rmidk, rmid, rho)
-#             v2_tot  = sum_intensive_loglog(rmidk, rmid, rho*v2) / rho_tot   # Mass-weighted
-#         eps         = c * rho_tot**pow / v2_tot**(l/2.0)
-#         v2k_new     = v2[k] + eps * dt
-#         v2_new[k,:] = v2k_new
-#         p_new[k,:]  = rho[k] * v2k_new
-#         for e in eps:
-#             if e > eps_max:
-#                 eps_max = e
-    
-#     return v2_new, p_new, eps_max
+    if thermal_boundary == FIXED_TEMPERATURE:
+        restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
