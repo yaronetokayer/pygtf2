@@ -1,14 +1,14 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='pygtf2',
+    name='multigtf',
     version='1.0.0',
     author='Yarone Tokayer',
     description='A Python implementation of a multi-species gravothermal fluid code',
-    long_description=open('README.md').read(),
+    long_description=open('README.md', encoding='utf-8').read(),
     long_description_content_type='text/markdown',
-    url='https://github.com/yaronetokayer/pygtf2',
-    packages=find_packages(),
+    url='https://github.com/yaronetokayer/multigtf',
+    packages=find_packages(exclude=('multigtf.dev', 'multigtf.dev.*')),
     install_requires=[
         "numpy>=2.2,<2.3",
         "scipy>=1.15",       # SciPy 1.15 works with NumPy 2.x
