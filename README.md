@@ -2,11 +2,9 @@
 
 **MultiGTF** is a modification and extension of the [**pygtfcode** package](https://github.com/yaronetokayer/pygtfcode).  It is a modern Python implementation of a 1D Lagrangian gravothermal fluid code that can handle mutiple species and simulate mass segregation due to conduction driven by two-body relaxation.
 
-For a worked example, see [the demo notebook](examples/demo.ipynb).
-The [saved demo outputs](examples/demo_output/) provide examples for analysis
-without rerunning the long simulations.
+See the [demo notebook](examples/demo.ipynb) for a fuller walkthrough of the API, configuration options, and example simulations. [Saved demo outputs](examples/demo_output/) are also provided for analysis without rerunning the long simulations.
 
-Contact yarone.tokayer-at-yale.edu with any questions/comments.
+Contact yarone.tokayer-at-yale.edu with questions or comments.
 
 ---
 
@@ -16,46 +14,41 @@ The code is organized around **two user-facing classes**:
 
 ### 1. `Config`
 
-Stores static input parameters, grouped into modules:
+Stores the input parameters and species definitions:
 
-* `io`: Output paths and snapshot cadence
-* `grid`: Grid resolution and domain
-* `init`: Initial profile (NFW, truncated NFW, or $\alpha$-$\beta$-$\gamma$)
-* `sim`: Physical parameters and simulation option (e.g., self-interaction cross section, calibrated parameters)
-* `prec`: Precision tolerances and iteration limits
+- `io`: Output paths, logging, and snapshot cadence.
+- `grid`: Initial radial domain and number of shells.
+- `spec`: A dictionary of species, each with a particle mass (`m_part`), mass-fraction weight (`frac`), and initial profile (`init`).
+- `sim`: Physical options, transport coefficients, binary heating, background potential, and stopping limits.
+- `prec`: Numerical tolerances and iteration limits.
+- `mtot`: The model's physical mass normalization.
+
+Profiles are configured separately for each species through `config.spec[name].init`. Available profile families include NFW, truncated NFW, alpha-beta-gamma, exponential, King, and exponentially truncated NFW. `Config()` initially contains no species; add them with `add_species()` before initializing a simulation.
 
 ### 2. `State`
 
-Holds the dynamically evolving quantities:
+Holds the evolving arrays and simulation state:
 
-* Radial grid and shell midpoints: `r`, `rmid`
-* Physical variables: `m`, `rho`, `p`, `u`, `v2`, `kn`, `trelax`
-* Diagnostic quantities: `mintrel`, `maxvel`, `minkn`, `du_max`, `dr_max`
-* Time tracking: `t`, `dt`, `step_count`, `snapshot_index`
-* Characteristic scales (derived from `Config`)
-* A `run()` method to evolve the system until collapse or a stopping condition is reached
+- Radial edges and shell midpoints: `r`, `rmid`.
+- Enclosed species mass, density, and one-dimensional velocity dispersion squared: `m`, `rho`, `v2`.
+- Diagnostics, including innermost total density (`rho0`) and the most recent transport/heating fractional energy change (`du_max`).
+- Time and output counters: `t`, `dt`, `step_count`, `snapshot_index`.
+- Characteristic physical scales in `char`, and the originating `Config` in `config`.
+- A `run()` method to advance the system until a requested or configured stopping condition is reached.
 
-A `State` object can be constructed in one of two ways:
-1. From a `Config` object.  The `Config` object then becomes an attribute of `State`.  In this way, multiple `State`s can be instantiated with different `Config` objects.
-2. From the directory of a simulation that has already been initialized.  This is useful for either analyzing or resuming a simulation from a different Python session.  No `Config` object is needed.  By default the state will initialize to the latest snapshot of the imported simulation.
+Initialize a simulation with `State.from_config(config)`. Each State retains its Config by reference; use separate configurations for separate experiments. Loading a State from disk with `State.from_dir()` is **not implemented**. Saved results can be analyzed with the readers and plotting functions without constructing a State.
 
-Note that `r` and `m` define bin edges, while `rho`, `p`, `u`, `v2`, `kn`, and `trelax` are all defined at `rmid`.  Therefore, `r` and `m` are longer than the other arrays by one entry.
+Array rows follow `state.labels`, ordered by decreasing particle mass. For `s` species and `N` shells, `r` and `m` have shape `(s, N+1)`, while `rmid`, `rho`, and `v2` have shape `(s, N)`. The evolving quantities are dimensionless; `state.char` holds their physical conversion scales. Pressure and specific internal energy are calculated as `rho * v2` and `1.5 * v2`, respectively.
 
-In addition to these two classes, there are three plotting functions that are automatically imported, each of which also exists as a method of `State`:
+Three plotting functions are exported alongside these classes and are also available as State methods:
 
-### 1. `plot_time_evolution()`
+- **`plot_time_evolution()`** plots a global diagnostic over time and can compare multiple simulations.
+- **`plot_snapshots()`** compares saved snapshots of one simulation, with up to three profiles in separate panels.
+- **`make_movie()`** animates saved profiles with fixed axis limits and optional insets. Rendering is parallel by default and requires `ffmpeg`.
 
-Plot the time evolution of any one of a number of system-wide quantities.  Multiple simulations can be passed to compare their evolutions on the same plot.
+Internally, the profile routines initialize the model, and the hydrostatic routines establish equilibrium. During evolution, the integrator coordinates energy transport, optional binary heating, and hydrostatic readjustment, then calls the output routines. The package layout below shows where these components live.
 
-### 2. `plot_snapshots()`
-
-Plot up to three profiles of a simulation or multiple simulations at specified points in time.
-
-### 3. `make_movie()`
-
-Animate the full evolution of up to three profiles.  This required ffmpeg to be installed and callable with `ffmpeg` from the working directory.
-
-Use `help()` for documentation on any of these classes, methods, and functions.
+Use `help()` for documentation on individual classes, methods, and functions.
 
 ---
 
@@ -63,217 +56,162 @@ Use `help()` for documentation on any of these classes, methods, and functions.
 
 ### Installation
 
+Use Python 3.12 or later.
+
 ```bash
-git clone https://github.com/yaronetokayer/pygtfcode.git
-cd pygtfcode
-pip install -e .
+git clone https://github.com/yaronetokayer/multigtf.git
+cd multigtf
+python -m pip install -e .
 ```
 
-Dependencies: Python 3.8+, `numpy`, `scipy`, `numba`, `matplotlib`, `tqdm`
+The dependencies `numpy`, `scipy`, `numba`, `matplotlib`, and `tqdm` are installed automatically. Install Jupyter separately to run the demo notebook. Movie generation additionally requires an `ffmpeg` executable on PATH.
 
 ### Example usage
 
 ```python
-import pygtfcode as gtf
+from pathlib import Path
+import multigtf as gtf
+
+output = Path('simulation_output')
+output.mkdir(parents=True, exist_ok=True)
 
 config = gtf.Config()
+config.io.base_dir = str(output)
+
+profile = ('abg', {'alpha': 2.0, 'beta': 5.0, 'gamma': 0.0})
+config.add_species('heavy', m_part=4.0, frac=0.2, init=profile)
+config.add_species('light', m_part=1.0, frac=0.8, init=profile)
+
 state = gtf.State.from_config(config)
-state.run()
+state.run(steps=1000)
 ```
 
-To import an existing simulation:
+This is a short example to check the installation; the demo follows longer physical evolution. `m_part` is the individual particle mass in solar masses. The `frac` values are mass-fraction weights and must sum to one; the mass represented inside the finite grid also depends on the profiles and domain. For a single-species model, add just one species with `frac=1.0`.
+
+Set profile and numerical options **before** calling `State.from_config()`, for example:
 
 ```python
-import pygtfcode as gtf
-
-state = gtf.State.from_dir(model_dir='/path/to/Model002')
-
-# The latest snapshot will be loaded by default.  To load a particular snapshot:
-state = gtf.State.from_dir(model_dir='/path/to/Model002', snapshot=59)
-```
-
-Alternatively, you can call `from pygtfcode import Config, State`.  In that case, plotting functions will not be automatically imported.
-
-We can also run for a specified duration:
-```python
-state.run(steps=100) # Run for 100 simulation steps
-state.run(time=55.0) # Run for a duration of 55.0 simulation time units
-state.run(rho_c=500.0) # Run until the central density exceeds 500.0
-```
-
-Halting criteria in `config` override these conditions.  multiple `run()` commands can be executed in succession, and each will continue from the current state.  Call `state.reset()` to reset the state to its initial condition and reset the set counter.
-
-To customize defaults:
-
-```python
-# Customize initial profile
-config.init = "abg"                                 # Use ABG with default params
-config.init = ("abg", {"alpha": 3.5, "beta": 4.5})  # Custom ABG
-
-# Customize other configuration parameters
+config.spec['heavy'].init = ('abg', {'alpha': 2.0, 'beta': 5.0, 'gamma': 0.0})
 config.grid.ngrid = 200
-config.io.model_no = 42
-config.io.base_dir = "/tmp/sims"                    # Default is the current working directory
-config.sim.sigma_m = 1.0
-
-# Switch to a truncated NFW
-config.init = ("truncated_nfw", {"Zt": 0.05, "deltaP": 1e-4})
-
-# Turn off chatter
-config.io.chatter = False
+config.prec.eps_du = 1.0e-4
+config.io.nlog = 25_000
 ```
 
-If you don’t explicitly assign `config.io.model_no`, it is automatically set to the next available model number in `config.io.base_dir` (e.g., if `Model000`, `Model001`, and `Model002` directories exist, it will assign `model_no = 3`) **when a `State` is instantiated**. You can explicity assign a `model_no` with `config = gtf.Config(model_no=5)` or with `config.io.model_no = 5` once config is instantiated.  Note that in that case, outputs from a previous simulations with the same `model_no` will be overridden.
+Other stopping conditions can be used instead of a step count:
+
+```python
+state.run(stoptime=0.1)  # Advance by an additional 0.1 simulation time units.
+state.run(rho0=1.0e4)    # Run until the innermost total density reaches this threshold.
+```
+
+Successive `run()` calls continue from the current state. Configured halting limits also apply. `state.reset()` restores the initial arrays and resets the counters using the existing model setup; create a fresh Config and State when changing species or structural parameters.
+
+Outputs are written under `config.io.base_dir` in a directory named `ModelXXXXX`. The base directory must exist. If `model_no` is unset, the lowest unused number is selected on first access. Set `config.io.model_no` explicitly if needed, but reusing a model directory can overwrite previous results; the current `io.overwrite` flag does not prevent this.
 
 ### Plotting
 
-There are three plotting functions that are imported with the `pygtfcode` package:
-
-The `plot_time_evolution()` function plots the evolution of system-wide parameters over time.  It can plot any of the columns in the `time_evolution.txt` output.
-
 ```python
-import pygtfcode as gtf
+# Compare initial and final saved profiles.
+state.plot_snapshots(snapshots=[0, -1], profiles=['rho', 'v2'])
 
-# Compare the central density evolution of two different simulations
-# The default plot is `rho_c` when no quantity is specified
-gtf.plot_time_evolution(state1, state2)
+# Plot the innermost total-density history and save the figure.
+state.plot_time_evolution(quantity='rho0', filepath='rho0_vs_time.png')
 
-# Alternatively, the simulations can be called by their Config objects or by their model numbers
-# v_max_phys returns the max velocity in physical units (km/s)
-gtf.plot_time_evolution(config1, config2, quantity="v_max_phys", ylabel=r"Custom ylabel")
-
-# base_dir needs to be specified if simulations are called by model number:
-gtf.plot_time_evolution(5, 6, quantity="kn_min", base_dir='./') # This is useful for simulations run in a different session
-
-# The plot can be saved to a file
-# Use 'show' to show the figure in standard output as well
-gtf.plot_time_evolution(state1, filepath='./rho_c_vs_time.png', show=True)
+# Optional: animate saved profiles without insets.
+state.make_movie(profiles=['rho', 'v2'], insets=False, parallel=False)
 ```
 
-The `plot_snapshots()` function plots up to three profiles in separate panels for one or multiple snapshots of the simulation.  Snapshots are specified by the index of the `snapshot_x.dat` file.  Like `plot_time_evolution()`, the State object, Config object, or model number can used to specify the simulation you wish to plot.
+Standalone functions accept a State, Config, or model number. Supply `base_dir` when using model numbers. After creating two simulations named `state1` and `state2`, compare them with:
 
 ```python
-import pygtfcode as gtf
-
-# Plot the initial density profile
-gtf.plot_snapshots(state)
-
-# Plot the mass profile at a specified snapshot
-gtf.plot_snapshots(config, snapshots=50, profiles='m')
-
-# Plot the density, v^2, and Knudsen number profiles, comparing several snapshots
-gtf.plot_snapshots(4, snapshots=[0, 50, 100], profiles=['rho', 'v2', 'kn'], base_dir='./')
-
-# The plot can be saved to a file
-# Use 'show=True' to show the figure in standard output as well
-gtf.plot_snapshots(state, filepath='./initial_rho.png')
+gtf.plot_time_evolution([state1, state2], quantity='rho0')
 ```
 
-The `make_movie()` function animates up to three profiles with fixed axis limits over the full saved evolution. It accepts a State, Config, or integer model number (with `base_dir`). Rendering is parallel by default; `parallel=False` selects serial rendering. Requires `ffmpeg`.
-
-```python
-import pygtf2 as gtf
-
-gtf.make_movie(state, profiles=['rho', 'v2'], insets=['rho_c_tot', 'eta_c'])
-gtf.make_movie(state, profiles=['rho', 'eta'], insets=False, parallel=False)
-state.make_movie(profiles=['rho', 'v2'], add_radii=['r_c'])
-```
-
-`insets=None` (the default) shows core density in the first panel. `insets=False` disables all insets; lists containing `None` disable individual panels. `time_evolution.txt` is needed only when using insets or marked radii. `xaxis='m'` uses total enclosed mass for every panel; a list selects the coordinate per panel. The default output is `movie.mp4` in the model directory; override it with `filepath`.
-
-The plotting functions also exist as methods to the `State` object:
-
-```python
-import pygtfcode as gtf
-
-config = gtf.Config()
-state = gtf.State.from_config(config)
-state.run()
-
-state.plot_time_evolution()         # Accepts all keyword arguments, but cannot compare between simulations when used this way
-
-state.plot_snapshots()              # Defaults to the latest state
-state.plot_snapshots(snapshots=0, filename="./initial_profs.png")   # Plot and save initial profiles
-# Note that while the standalone function defaults to the initial profile, the `State` method defaults to the current state.
-
-state.make_movie(profiles=['rho', 'eta', 'v2'], insets=False)
-```
+Available snapshot profiles are `rho`, `m`, `v2`, and `eta`. The standalone `plot_snapshots()` defaults to the initial snapshot; the State method defaults to the latest **saved** snapshot. The plotting functions read output files rather than unsaved live arrays. See the demo for additional quantities, movie options, and analysis of saved simulations.
 
 ---
 
 ## Output files
 
-All outputs are written to the directory specified by `config.io.base_dir` and `model_no`.
+Each model directory contains:
 
-### 1. `model_metadata.txt`
+| File | Contents |
+| --- | --- |
+| `model_metadata.txt` | Configuration and species definitions. |
+| `char_params.txt` | Characteristic physical scales and normalized Coulomb logarithms. |
+| `logfile.txt` | Progress and timestep statistics, including entries every `nlog` steps. |
+| `profile_x.dat` | Total and per-species radial profiles; `x` is the snapshot index. |
+| `snapshot_conversion.txt` | Snapshot index, simulation time, physical time in Gyr, and step count. |
+| `time_evolution.txt` | Global and per-species diagnostics over time. |
 
-Stores all information about the simulation model for reference.  Unpacks all attributes of the `Config` object that instantiated the `State`.
-
-### 2. `logfile.txt`
-
-Logs relevant quantities every `nlog` steps (set in `config.io`).  If `chatter` is set to `True`, then these are also output to the console.
-
-### 3. `profile_x.dat`
-
-Radial profiles of all fluid variables, written each time the central density changes by a fractional amount `drho_prof` (set in `config.io`). The suffix `x` is the snapshot index.  `snapshot_conversion.txt` stores the conversion between the snapshot index `x` and simulation time.
-
-Each row contains:
-
-```
-i   log(r_i)   log(rmid_i)   m_i   rho_i   v2_i   trelax_i   kn_i
-```
-
-### 4. `time_evolution.txt`
-
-Records the time evolution of relevant quantites, written each time the central density changes by a fractional amount `drho_tevol` (set in `config.io`).
+Profile snapshots are triggered by changes in innermost density (`io.drho_prof`). Time-history output is triggered by density changes (`io.drho_tevol`) or changes in the species half-mass-radius spread (`io.dr50_tevol`). Initial and final output is also written. File headers identify the columns; radius columns in profile files contain base-10 logarithms.
 
 ---
 
 ## Package Layout
 
-```
-pygtfcode/
-├── config.py               # Defines 'Config' class
-├── state.py                # Defines 'State' class
+The main components inside the `multigtf/` package are shown below; `__init__.py` files are omitted.
+
+```text
+multigtf/
+├── config.py                   # Config class and species management
+├── state.py                    # State initialization, evolution, and user methods
 │
-├── parameters/             # Parameter subclasses for 'Config' attributes
+├── parameters/                 # Input containers and characteristic scales
 │   ├── char_params.py
 │   ├── constants.py
 │   ├── grid_params.py
 │   ├── init_params.py
 │   ├── io_params.py
 │   ├── prec_params.py
-│   └── sim_params.py
+│   ├── sim_params.py
+│   └── spec_params.py
 │
-├── profiles/               # Profile specific tools to set initial conditions of 'State'
+├── profiles/                   # Initial profiles and background potential
 │   ├── abg.py
+│   ├── bkg_pot.py
+│   ├── etnfw.py
+│   ├── exp.py
+│   ├── king.py
 │   ├── nfw.py
 │   ├── truncated_nfw.py
-│   └── profile_routines.py
+│   └── profile_init_routines.py
 │
-├── evolve/                 # Integration and solver, used by 'State' methods
+├── evolve/                     # Time integration and physical updates
 │   ├── integrator.py
 │   ├── transport.py
-│   └── hydrostatic.py
+│   ├── hydrostatic.py
+│   ├── binaries.py
+│   └── evaporate.py            # Prototype; not used by State.run
 │
-├── io/                     # I/O routines
+├── io/                         # Reading and writing simulation output
+│   ├── read.py
 │   └── write.py
-│   └── read.py
 │
-├── plot/                   # Plotting routines
-│   ├── time_evolution.py
-│   └── snapshot.py
+├── plot/                       # Static figures and movies
+│   ├── snapshot.py
+│   └── time_evolution.py
+│
+└── util/                       # Shared numerical and interpolation helpers
+    ├── calc.py
+    ├── interpolate.py
+    └── little_helpers.py
 ```
 
----
+The repository's `examples/` directory contains the demo notebook and saved example outputs. `tests/` contains the automated tests.
 
 ## Next steps
 
-* v1.0 is complete, v2.0 in development
-* v2.0 will be able to accomodate multiple species
+The API described here is on `main`; multiple species and binary heating are already implemented. The following features remain unfinished:
+
+- Restarting a saved simulation through `State.from_dir()`.
+- Evaporation through `sim.evap` and the decaying Hernquist background `hernq_decay`.
+- Central black holes, inner cavities, and thermal reservoirs, under development on the separate `central_bh` branch.
+
+Use the demo and docstrings for the supported configuration options. Numerical settings and convergence should be checked for each scientific application; record the exact commit or release used for published results.
 
 ---
 
 ## License
 
-MIT License. See [LICENSE](./LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details.
