@@ -1,7 +1,7 @@
 import numpy as np 
 from numba import njit, types, float64, void
-from pygtf2.util.interpolate import sum_intensive_loglog_single, interp_intensive_loglog
-from pygtf2.profiles.bkg_pot import hernq_static_scalar
+from multigtf.util.interpolate import sum_intensive_loglog_single, interp_intensive_loglog
+from multigtf.profiles.bkg_pot import hernq_static_scalar
 
 CORE_HALF_RHO0 = 0
 CORE_SPITZER87 = 1

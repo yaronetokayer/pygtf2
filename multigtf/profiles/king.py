@@ -2,7 +2,7 @@ import numpy as np
 from scipy.integrate import quad, solve_ivp
 from scipy.interpolate import interp1d
 from numba import njit
-from pygtf2.util.calc import add_bkg_pot
+from multigtf.util.calc import add_bkg_pot
 
 """
 Code units in King profile:

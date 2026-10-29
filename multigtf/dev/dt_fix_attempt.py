@@ -1,7 +1,7 @@
 import numpy as np 
 from numba import njit, float64, types, void
-from pygtf2.util.interpolate import interp_linear_to_interfaces
-from pygtf2.util.calc import solve_tridiagonal_thomas
+from multigtf.util.interpolate import interp_linear_to_interfaces
+from multigtf.util.calc import solve_tridiagonal_thomas
 
 @njit(
     void(float64, float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:, :], float64[:, :]),

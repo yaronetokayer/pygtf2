@@ -1,6 +1,6 @@
 import numpy as np
 from numba import njit, float64, void
-from pygtf2.util.interpolate import sum_extensive_loglog
+from multigtf.util.interpolate import sum_extensive_loglog
 
 @njit
 def geomspace_numba(xmin, xmax, num):

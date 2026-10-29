@@ -1,10 +1,10 @@
 import numpy as np
-from pygtf2.profiles.nfw import menc_nfw, sigr_nfw
-from pygtf2.profiles.abg import menc_abg, sigr_abg
-from pygtf2.profiles.truncated_nfw import menc_trunc, sigr_trunc
-from pygtf2.profiles.exp import menc_exp, sigr_exp
-from pygtf2.profiles.king import menc_king, sigr_king
-from pygtf2.profiles.etnfw import menc_etnfw, sigr_etnfw
+from multigtf.profiles.nfw import menc_nfw, sigr_nfw
+from multigtf.profiles.abg import menc_abg, sigr_abg
+from multigtf.profiles.truncated_nfw import menc_trunc, sigr_trunc
+from multigtf.profiles.exp import menc_exp, sigr_exp
+from multigtf.profiles.king import menc_king, sigr_king
+from multigtf.profiles.etnfw import menc_etnfw, sigr_etnfw
 
 def _as_f64(x):
     """

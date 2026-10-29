@@ -1,12 +1,12 @@
 import numpy as np 
-from pygtf2.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
-from pygtf2.evolve.transport import conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT
-from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi, STATUS_SHELL_CROSSING
-from pygtf2.evolve.evaporate import evaporate
-from pygtf2.evolve.binaries import binary_heating
-from pygtf2.util.interpolate import sum_intensive_loglog_single
-from pygtf2.util.calc import calc_r50_spread
-from pygtf2.util.little_helpers import max_frac_change
+from multigtf.io.write import write_profile_snapshot, write_log_entry, write_time_evolution
+from multigtf.evolve.transport import conduct_imex_once, HEX_FIRST, COND_FIRST, STRANG_SPLIT
+from multigtf.evolve.hydrostatic import revirialize_interp_jacobi, STATUS_SHELL_CROSSING
+from multigtf.evolve.evaporate import evaporate
+from multigtf.evolve.binaries import binary_heating
+from multigtf.util.interpolate import sum_intensive_loglog_single
+from multigtf.util.calc import calc_r50_spread
+from multigtf.util.little_helpers import max_frac_change
 
 def run_until_stop(state, start_step, **kwargs):
     """

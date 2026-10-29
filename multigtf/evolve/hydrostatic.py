@@ -1,7 +1,7 @@
 import numpy as np
 from numba import njit, float64, types, void, int64
-from pygtf2.util.interpolate import interp_m_enc, interp_m_enc_and_K
-from pygtf2.util.calc import add_bkg_pot, solve_tridiagonal_thomas, add_bkg_K
+from multigtf.util.interpolate import interp_m_enc, interp_m_enc_and_K
+from multigtf.util.calc import add_bkg_pot, solve_tridiagonal_thomas, add_bkg_K
 
 STATUS_OK = 0
 STATUS_SHELL_CROSSING = 1

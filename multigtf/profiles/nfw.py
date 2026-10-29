@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.integrate import quad
-from pygtf2.util.calc import add_bkg_pot_scalar
+from multigtf.util.calc import add_bkg_pot_scalar
 
 def fNFW(r):
     """

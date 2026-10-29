@@ -1,6 +1,6 @@
 from scipy.integrate import quad
 import numpy as np
-from pygtf2.util.calc import add_bkg_pot_scalar
+from multigtf.util.calc import add_bkg_pot_scalar
 
 def chi(prec, init):
     """

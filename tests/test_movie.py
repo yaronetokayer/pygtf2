@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import matplotlib
 matplotlib.use("Agg")
-import pygtf2 as gtf
-from pygtf2.plot import snapshot
+import multigtf as gtf
+from multigtf.plot import snapshot
 
 
 class MovieTests(unittest.TestCase):

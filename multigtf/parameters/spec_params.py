@@ -1,5 +1,5 @@
 from typing import Dict, Any, Tuple
-from pygtf2.parameters.init_params import (
+from multigtf.parameters.init_params import (
     InitParams,
     make_init_params,
 )

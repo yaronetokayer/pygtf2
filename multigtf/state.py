@@ -1,5 +1,5 @@
 import numpy as np
-from pygtf2.parameters.constants import Constants as const
+from multigtf.parameters.constants import Constants as const
 import pprint
 from pathlib import Path
 
@@ -79,7 +79,7 @@ class State:
         for name in self.labels:
             if self.config.spec[name].init.prof == 'truncated_nfw':
                 print(f"Computing truncated NFW potential for species {name}:")
-                from pygtf2.profiles.truncated_nfw import integrate_potential, generate_rho_lookup
+                from multigtf.profiles.truncated_nfw import integrate_potential, generate_rho_lookup
                 prec = config.prec
                 chatter = config.io.chatter
                 init = config.spec[name].init
@@ -92,7 +92,7 @@ class State:
                 first = False
             if self.config.spec[name].init.prof == 'king':
                 print(f"Computing King potential for species {name}:")
-                from pygtf2.profiles.king import generate_nu_lookup, integrate_W_king
+                from multigtf.profiles.king import generate_nu_lookup, integrate_W_king
                 prec = config.prec
                 chatter = config.io.chatter
                 init = config.spec[name].init
@@ -123,7 +123,7 @@ class State:
         State
             A new State object initialized with the given configuration.
         """
-        from pygtf2.io.write import make_dir, write_metadata, write_profile_snapshot, write_char_params
+        from multigtf.io.write import make_dir, write_metadata, write_profile_snapshot, write_char_params
 
         state = cls(config)
         state.reset()                                    # Initialize all state variables
@@ -141,7 +141,7 @@ class State:
         Reserved interface for restoring a State from saved output.
 
         Currently always raises RuntimeError because restart support is still
-        in development. Use pygtf2.io.read.load_snapshot_bundle to inspect saved
+        in development. Use multigtf.io.read.load_snapshot_bundle to inspect saved
         arrays and Config.from_dict(import_metadata(...)) to recover parameters;
         neither resumes integration.
         """
@@ -152,9 +152,9 @@ class State:
             raise FileNotFoundError(f"Model directory does not exist: {p}")
         
         # --- imports
-        from pygtf2.io.read import import_metadata, load_snapshot_bundle
-        from pygtf2.config import Config
-        from pygtf2.util.calc import calc_rho_v2_r_c, calc_r50_spread
+        from multigtf.io.read import import_metadata, load_snapshot_bundle
+        from multigtf.config import Config
+        from multigtf.util.calc import calc_rho_v2_r_c, calc_r50_spread
 
         # --- metadata + snapshot
         meta = import_metadata(p)
@@ -292,8 +292,8 @@ class State:
         The returned CharParams also contains the normalized Coulomb logarithm
         matrix and the dimensionless transport coefficients c1 and c2.
         """
-        from pygtf2.parameters.char_params import CharParams
-        from pygtf2.profiles.nfw import fNFW
+        from multigtf.parameters.char_params import CharParams
+        from multigtf.profiles.nfw import fNFW
 
         config = self.config
         if config.io.chatter:
@@ -320,7 +320,7 @@ class State:
         rvir /= float(const.xhubble)
 
         if profile in ['abg']:
-            from pygtf2.profiles.abg import chi
+            from multigtf.profiles.abg import chi
             char.chi = float(chi(self.config.prec, init_ref))
 
             if rs is not None: # User specified scale radius
@@ -389,7 +389,7 @@ class State:
         zero. A configured background also updates char.t0 and char.lnL using
         its enclosed mass at the outer grid radius.
         """
-        from pygtf2.util.calc import add_bkg_pot_scalar
+        from multigtf.util.calc import add_bkg_pot_scalar
 
         config = self.config
         char = self.char
@@ -495,7 +495,7 @@ class State:
         profile is scaled by its species mass fraction. The central pressure
         is adjusted before the subsequent hydrostatic-equilibrium iteration.
         """
-        from pygtf2.profiles.profile_init_routines import menc, sigr
+        from multigtf.profiles.profile_init_routines import menc, sigr
         config = self.config
         prec = config.prec
         spec = config.spec
@@ -570,7 +570,7 @@ class State:
         iteratively applies Jacobi revirialization until max |dr/r| < 1e-10.
         Raises RuntimeError on shell crossing or failure within 100 iterations.
         """
-        from pygtf2.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING
+        from multigtf.evolve.hydrostatic import revirialize_interp_jacobi_diagnostics, compute_he_pressures_with_resid, STATUS_SHELL_CROSSING
         chatter = self.config.io.chatter
         bkg_param = self.bkg_param
 
@@ -637,8 +637,8 @@ class State:
         configuration changes; use State.from_config for that. No output files are
         changed until a subsequent write or run, which can replace existing data.
         """
-        from pygtf2.util.calc import calc_r50_spread, mass_fraction_radii
-        from pygtf2.util.interpolate import sum_intensive_loglog_single
+        from multigtf.util.calc import calc_r50_spread, mass_fraction_radii
+        from multigtf.util.interpolate import sum_intensive_loglog_single
 
         config = self.config
 
@@ -694,8 +694,8 @@ class State:
         Writes initial/final snapshots, time-history records, and log entries,
         and updates the State in place. Returns None.
         """
-        from pygtf2.evolve.integrator import run_until_stop
-        from pygtf2.io.write import write_log_entry, write_profile_snapshot, write_time_evolution
+        from multigtf.evolve.integrator import run_until_stop
+        from multigtf.io.write import write_log_entry, write_profile_snapshot, write_time_evolution
         from time import time as _now
 
         start = _now()
@@ -730,14 +730,14 @@ class State:
         """
         Plot this model's saved time-history data.
 
-        Forwards keyword arguments to pygtf2.plot_time_evolution. The default
+        Forwards keyword arguments to multigtf.plot_time_evolution. The default
         quantity is 'rho_c' (core density), with logarithmic y scale. Supported
         quantities are 'rho_c', 'rho0', 'v2_c', 'r_c', 'eta_c', 'm_c',
         'v20_tot', and 'r_enc'. Uses time_evolution.txt, not unsaved state arrays.
         See the top-level function for labels, saving, and display options.
         Returns None.
         """
-        from pygtf2.plot.time_evolution import plot_time_evolution
+        from multigtf.plot.time_evolution import plot_time_evolution
 
         plot_time_evolution(self, **kwargs)
 
@@ -745,13 +745,13 @@ class State:
         """
         Plot saved radial profiles for this model.
 
-        Forwards keyword arguments to pygtf2.plot_snapshots, but defaults
+        Forwards keyword arguments to multigtf.plot_snapshots, but defaults
         snapshots to -1 (latest saved snapshot). This does not plot unsaved
         state arrays. Profiles are 'rho', 'm', 'v2', and 'eta', with 'rho' as
         the default. See the top-level function for axis and display options.
         Returns None.
         """
-        from pygtf2.plot.snapshot import plot_snapshots
+        from multigtf.plot.snapshot import plot_snapshots
 
         snapshots = kwargs.pop('snapshots', -1)
         plot_snapshots(self, snapshots=snapshots, **kwargs)
@@ -759,13 +759,13 @@ class State:
     def make_movie(self, **kwargs):
         """Animate this simulation with fixed axes and optional insets.
 
-        Accepts the keyword arguments of pygtf2.make_movie, including
+        Accepts the keyword arguments of multigtf.make_movie, including
         parallel=False for serial rendering and insets=False for no insets.
         Profiles are 'rho', 'm', 'v2', and 'eta'; the default is ['rho', 'v2'].
         Output defaults to movie.mp4 in the model directory. Requires ffmpeg.
-        See help(pygtf2.make_movie) for all options.
+        See help(multigtf.make_movie) for all options.
         """
-        from pygtf2.plot.snapshot import make_movie
+        from multigtf.plot.snapshot import make_movie
 
         make_movie(self, **kwargs)
 

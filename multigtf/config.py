@@ -1,13 +1,13 @@
 from typing import Dict, Any, Optional, Tuple
-from pygtf2.parameters.io_params import IOParams
-from pygtf2.parameters.grid_params import GridParams
-from pygtf2.parameters.init_params import (
+from multigtf.parameters.io_params import IOParams
+from multigtf.parameters.grid_params import GridParams
+from multigtf.parameters.init_params import (
     InitParams,
     make_init_params,
 )
-from pygtf2.parameters.spec_params import SpecParams
-from pygtf2.parameters.prec_params import PrecisionParams
-from pygtf2.parameters.sim_params import SimParams
+from multigtf.parameters.spec_params import SpecParams
+from multigtf.parameters.prec_params import PrecisionParams
+from multigtf.parameters.sim_params import SimParams
 import pprint
 
 def _init_param(param_class, arg):

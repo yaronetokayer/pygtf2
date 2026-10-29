@@ -1,7 +1,7 @@
 import numpy as np
 import os
-from pygtf2.util.calc import mass_fraction_radii, calc_r_c, calc_v2_c, calc_core_species_quantities, CORE_HALF_RHO0, CORE_SPITZER87
-from pygtf2.util.interpolate import sum_extensive_loglog_single, sum_intensive_loglog_single
+from multigtf.util.calc import mass_fraction_radii, calc_r_c, calc_v2_c, calc_core_species_quantities, CORE_HALF_RHO0, CORE_SPITZER87
+from multigtf.util.interpolate import sum_extensive_loglog_single, sum_intensive_loglog_single
 
 def make_dir(state):
     """
@@ -259,8 +259,8 @@ def write_profile_snapshot(state, initialize=False):
     m_part = state.m_part
 
     # Compute totals on the fly
-    from pygtf2.util.interpolate import sum_intensive_loglog, sum_extensive_loglog, interp_intensive_loglog
-    from pygtf2.util.calc import compute_eta_multi
+    from multigtf.util.interpolate import sum_intensive_loglog, sum_extensive_loglog, interp_intensive_loglog
+    from multigtf.util.calc import compute_eta_multi
     r_tot = np.zeros((Np1,))
     r_tot_min = np.min(r[:,1:])
     r_tot_max = np.max(r[:,1:])
@@ -563,7 +563,7 @@ def write_time_evolution(state):
     v2_c = np.sum(m_c_species * v2_c_species) / m_c
 
     # --- Equipartition within the core
-    from pygtf2.util.calc import compute_eta_multi
+    from multigtf.util.calc import compute_eta_multi
 
     sigma_c_species = np.sqrt(v2_c_species)
 

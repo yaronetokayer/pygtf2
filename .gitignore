@@ -179,3 +179,7 @@ experiments/*
 !/examples/demo_output/Model00019/
 !/examples/demo_output/Model00020/
 !/examples/demo_output/Model00021/
+
+# Development
+multigtf/dev
+multigtf/dev/*
