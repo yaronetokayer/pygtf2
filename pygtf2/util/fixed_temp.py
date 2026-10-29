@@ -47,8 +47,8 @@ def adjust_tridiag_system_fixed_temp(a, b, c, d, v2_bdy, uk, k, N):
     c[N - 1] = 0.0
     d[N - 1] = 1.5 * v2_bdy[k, 1] - uk[N - 1]
 
-@njit(void(float64[:, :], float64[:, :], float64[:], float64[:], float64[:], float64[:], float64[:, :], float64, float64, types.int64, types.int64), cache=True, fastmath=True)
-def accumulate_reservoir_heat(dq_res_trial, dq_res_abs_trial, rk, mk, rhok_int, uk, du_trial, pref, dt, k, N):
+@njit(void(float64[:, :], float64[:], float64[:], float64[:], float64[:], float64[:, :], float64, float64, types.int64, types.int64), cache=True, fastmath=True)
+def accumulate_reservoir_heat(dq_res_trial, rk, mk, rhok_int, uk, du_trial, pref, dt, k, N):
     """
     Accumulate the heat exchanged with the reservoirs at the boundaries
     """
@@ -80,10 +80,9 @@ def accumulate_reservoir_heat(dq_res_trial, dq_res_abs_trial, rk, mk, rhok_int, 
             dq -= dt * lum_lin
 
         dq_res_trial[k, side] += dq
-        dq_res_abs_trial[k, side] += abs(dq)
 
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :], float64[:, :],), cache=True, fastmath=True,)
-def restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,):
+@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:, :],), cache=True, fastmath=True,)
+def restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,):
     """
     Heat exchange and binary heating can change the boundary temperatures independently of conduction.
     For a FIXED_TEMPERATURE thermal boundary, we want to restore this.
@@ -99,12 +98,11 @@ def restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,):
             dq = 1.5 * dm * delta
 
             dq_res_trial[k, side] += dq
-            dq_res_abs_trial[k, side] += abs(dq)
 
             v2[k, cell] = v2_bdy[k, side]
 
-@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:, :], float64[:, :], types.int64, types.int64), cache=True, fastmath=True,)
-def add_pdv_to_reservoir(r, m, v2_bdy, vol_old, dq_res_trial, dq_res_abs_trial, k, N):
+@njit(void(float64[:, :], float64[:, :], float64[:, :], float64[:], float64[:, :], types.int64, types.int64), cache=True, fastmath=True,)
+def add_pdv_to_reservoir(r, m, v2_bdy, vol_old, dq_res_trial, k, N):
     """
     To accumulate reservoir heat after revirialization
     """
@@ -125,4 +123,3 @@ def add_pdv_to_reservoir(r, m, v2_bdy, vol_old, dq_res_trial, dq_res_abs_trial, 
         )
 
         dq_res_trial[k, side] += dq
-        dq_res_abs_trial[k, side] += abs(dq)

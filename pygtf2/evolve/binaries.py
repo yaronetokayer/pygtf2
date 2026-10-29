@@ -1,6 +1,6 @@
 import numpy as np
 from numba import njit, float64, int64, types
-from transport import ZERO_LUMINOSITY, FIXED_TEMPERATURE
+from pygtf2.evolve.transport import ZERO_LUMINOSITY, FIXED_TEMPERATURE
 from pygtf2.util.fixed_temp import restore_boundary_v2
 
 @njit(
@@ -15,7 +15,6 @@ from pygtf2.util.fixed_temp import restore_boundary_v2
         float64[:, :],   # m
         float64[:, :],   # v2_bdy
         float64[:, :],   # dq_res_trial
-        float64[:, :],   # dq_res_abs_trial
     ),
     cache=True,
     fastmath=True,
@@ -31,7 +30,6 @@ def binary_heating(
     m: np.ndarray, 
     v2_bdy : np.ndarray, 
     dq_res_trial : np.ndarray, 
-    dq_res_abs_trial : np.ndarray,
 ) -> None:
     """
     Apply heating from three-body binary formation using the
@@ -73,8 +71,6 @@ def binary_heating(
         Boundary fixed temperatures, needed for thermal_boundary == FIXED_TEMPERATURE
     dq_res_trial : ndarray
         Tracks thermal reservoir, needed for thermal_boundary == FIXED_TEMPERATURE
-    dq_res_trial : ndarray
-        Tracks thermal reservoir, needed for thermal_boundary == FIXED_TEMPERATURE   
 
     Returns
     -------
@@ -398,4 +394,4 @@ def binary_heating(
             v2[k, j] += (2.0 / 3.0) * dt * du_dt
 
     if thermal_boundary == FIXED_TEMPERATURE:
-        restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+        restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)

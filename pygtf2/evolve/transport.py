@@ -299,7 +299,6 @@ def _build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
         types.int64, 
         float64[:, :], 
         float64[:, :], 
-        float64[:, :], 
         float64[:], 
         float64[:], 
         float64[:], 
@@ -312,7 +311,7 @@ def _build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     cache=True, fastmath=True
 )
 def _conduct_implicit(v2, rho, r, m, m_bh,
-                     thermal_boundary, v2_bdy, dq_res_trial, dq_res_abs_trial,
+                     thermal_boundary, v2_bdy, dq_res_trial,
                      a, b, c, d, 
                      c2, mrat, lnL, du_trial, dt,):
     """
@@ -356,7 +355,7 @@ def _conduct_implicit(v2, rho, r, m, m_bh,
         solve_tridiagonal_thomas(a, b, c, d, du_trial[k])
 
         if thermal_boundary == FIXED_TEMPERATURE:
-            accumulate_reservoir_heat(dq_res_trial, dq_res_abs_trial, rk, mk, rhok_int, uk, du_trial, pref, dt, k, N)
+            accumulate_reservoir_heat(dq_res_trial, rk, mk, rhok_int, uk, du_trial, pref, dt, k, N)
 
     for k in range(s):
         for i in range(N):
@@ -371,8 +370,7 @@ def _conduct_implicit(v2, rho, r, m, m_bh,
         float64,        # m_bh
         types.int64,    # thermal_boundary
         float64[:, :],  # v2_bdy
-        float64[:, :],  # dq_res
-        float64[:, :],  # q_res
+        float64[:, :],  # dq_res_trial
         float64,        # c1
         float64,        # c2
         float64[:],     # mrat
@@ -389,7 +387,7 @@ def _conduct_implicit(v2, rho, r, m, m_bh,
 )
 def conduct_imex_once(
     v2, rho, r, m, m_bh,
-    thermal_boundary, v2_bdy, dq_res_trial, dq_res_abs_trial,
+    thermal_boundary, v2_bdy, dq_res_trial,
     c1, c2, mrat, lnL,
     v2_work, a_work, b_work, c_work, d_work,
     dt, order,
@@ -405,18 +403,18 @@ def conduct_imex_once(
     if order == HEX_FIRST:
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
         if thermal_boundary == FIXED_TEMPERATURE:
-            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
         _conduct_implicit(v2, rho, r, m, m_bh, 
-                         thermal_boundary, v2_bdy, dq_res_trial, dq_res_abs_trial, 
+                         thermal_boundary, v2_bdy, dq_res_trial, 
                          a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
 
     elif order == COND_FIRST:
         _conduct_implicit(v2, rho, r, m, m_bh, 
-                         thermal_boundary, v2_bdy, dq_res_trial, dq_res_abs_trial,
+                         thermal_boundary, v2_bdy, dq_res_trial,
                          a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
         if thermal_boundary == FIXED_TEMPERATURE:
-            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
 
     elif order == STRANG_SPLIT:
         half_dt = 0.5 * dt
@@ -424,16 +422,16 @@ def conduct_imex_once(
         # First half-step hex on initial state determines dt_eff
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
         if thermal_boundary == FIXED_TEMPERATURE:
-            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
 
         _conduct_implicit(v2, rho, r, m, m_bh, 
-                         thermal_boundary, v2_bdy, dq_res_trial, dq_res_abs_trial,
+                         thermal_boundary, v2_bdy, dq_res_trial,
                          a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt,)
 
         # Recompute the second half-step on the updated state.
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
         if thermal_boundary == FIXED_TEMPERATURE:
-            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial, dq_res_abs_trial,)
+            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
 
     else:
         raise ValueError("unrecognized order code in conduction step")

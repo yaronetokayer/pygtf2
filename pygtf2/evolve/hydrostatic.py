@@ -300,7 +300,6 @@ def compute_he_pressures_with_resid(r, rho, p, m, m_bh, bkg_param):
         types.int64,   # thermal_boundary
         float64[:, :], # v2_bdy
         float64[:, :], # dq_res_trial
-        float64[:, :], # dq_res_abs_trial
     ), 
     cache=True, fastmath=True,
 )
@@ -308,7 +307,7 @@ def revirialize_interp_jacobi(
     r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
     thermal_boundary, v2_bdy,
-    dq_res_trial, dq_res_abs_trial,
+    dq_res_trial,
     ) -> int:
     """
     Multi-species re-virialization, Jacobi-style in the inter-species coupling.
@@ -344,8 +343,6 @@ def revirialize_interp_jacobi(
         Fixed temperatures at the boundaries
     dq_res_trial : ndarray, shape (s, 2)
         Reservoir heat tracker
-    dq_res_abs_trial : ndarray, shape (s, 2)
-        Reservoir heat tracker, absolute value
 
     Returns
     -------
@@ -393,7 +390,7 @@ def revirialize_interp_jacobi(
                 return STATUS_SHELL_CROSSING
 
         if thermal_boundary == FIXED_TEMPERATURE: # Account for pdv work on reservoir
-            add_pdv_to_reservoir(r, m, v2_bdy, vol_old, dq_res_trial, dq_res_abs_trial, k, Np1 - 1)
+            add_pdv_to_reservoir(r, m, v2_bdy, vol_old, dq_res_trial, k, Np1 - 1)
 
     return STATUS_OK
 

@@ -377,147 +377,6 @@ def append_snapshot_conversion(state):
 
     _update_file(filepath, header, new_line, index)
 
-# def write_time_evolution(state):
-#     """
-#     Append time evolution data to time_evolution.txt
-
-#         The output contains global time-evolution quantities followed by
-#         per-species quantities for each label in ``state.labels``. The exact
-#         columns and their order are defined by the file header.
-
-#     Arguments
-#     ---------
-#     state : State
-#         The current simulation state.
-#     """
-#     filepath = os.path.join(
-#         state.config.io.base_dir,
-#         state.config.io.model_dir,
-#         "time_evolution.txt"
-#     )
-
-#     step = state.step_count
-#     t = state.t
-
-#     labels = list(state.labels)
-#     s = len(labels)
-
-#     # --- Compute core quantities
-#     rho     = state.rho
-#     r_c     = calc_r_c(state.rmid, rho, state.v2, CORE_HALF_RHO0,)
-#     v2_c    = calc_v2_c(r_c, r, m, state.v2)
-#     m_c     = sum_extensive_loglog_single(r_c, r, m)
-#     rho_c   = 3.0 * m_c / r_c**3
-
-#     # --- Compute eta_core on the fly
-#     from pygtf2.util.calc import compute_eta_multi
-    
-#     m_part = state.m_part
-
-#     # Mass-weighted velocity dispersion within r_core for each species
-#     sigma_core = np.empty(s, dtype=np.float64)
-#     M_core_species = np.empty(s, dtype=np.float64)
-#     for k in range(s):
-#         M_core = 0.0
-#         Mv2_core = 0.0
-
-#         for i in range(state.r.shape[1] - 1):
-#             rin = state.r[k, i]
-#             rout = state.r[k, i + 1]
-
-#             if rin >= r_c:
-#                 break
-
-#             # Include only the portion of the shell lying inside r_core
-#             rout_eff = min(rout, r_c)
-
-#             dV = rout_eff**3 - rin**3
-#             dM = state.rho[k, i] * dV
-
-#             M_core += dM
-#             Mv2_core += dM * state.v2[k, i]
-
-#         M_core_species[k] = M_core
-#         sigma_core[k] = np.sqrt(Mv2_core / M_core)
-
-#     # Fit sigma_core \propto m^(-eta_core)
-#     eta_core_arr = np.zeros(1, dtype=np.float64)
-#     eta_core_err_arr = np.zeros(1, dtype=np.float64)
-
-#     if s > 1 and np.max(m_part) > np.min(m_part):
-#         compute_eta_multi(
-#             m_part,
-#             sigma_core[:, None],
-#             eta_core_arr,
-#             eta_core_err_arr,
-#         )
-
-#     eta_core = eta_core_arr[0]
-#     eta_core_err = eta_core_err_arr[0]
-
-#     # Optional useful diagnostic: species mass fractions within the core
-#     f_core_species = M_core_species / np.sum(M_core_species)
-
-#     v20_tot = sum_intensive_loglog_single(np.min(state.rmid[:,0]), state.rmid, rho*state.v2) / state.rho0
-
-#     columns = [
-#         ("step", step),
-#         ("time", t),
-#         ("rho0_tot", state.rho0),
-#         ("v20_tot", v20_tot),
-#         ("r_c", r_c),
-#         ("v2_c", v2_c),
-#         ("m_c", m_c),
-#         ("rho_c_tot", rho_c),
-#         ("eta_c", eta_core),
-#     ]
-
-#     percents = np.array([0.01, 0.05, 0.10, 0.20, 0.50, 0.90], dtype=np.float64)
-
-#     r = state.r
-#     m = state.m
-#     r50evo = state.r50evo[:, 1]
-
-#     for k, name in enumerate(labels):
-#         rho0_k = float(rho[k, 0])
-#         r50evok = r50evo[k]
-#         m_ck = M_core_species[k]
-
-#         radii = np.asarray(
-#             mass_fraction_radii(r[k], m[k], percents),
-#             dtype=np.float64
-#         )
-
-#         columns.extend([
-#             (f"rho0[{name}]", rho0_k),
-#             (f"r01[{name}]", radii[0]),
-#             (f"r05[{name}]", radii[1]),
-#             (f"r10[{name}]", radii[2]),
-#             (f"r20[{name}]", radii[3]),
-#             (f"r50[{name}]", radii[4]),
-#             (f"r90[{name}]", radii[5]),
-#             (f"r50evo[{name}]", r50evok),
-#             (f"m_c[{name}]", m_ck),
-#         ])
-
-#     # Build header
-#     header = "  ".join(f"{name:>13}" for name, _ in columns) + "\n"
-
-#     # Build row
-#     formatted_values = []
-#     for name, value in columns:
-#         if isinstance(value, int):
-#             formatted_values.append(f"{value:13d}")
-#         else:
-#             formatted_values.append(f"{value:13.6e}")
-
-#     new_line = "  ".join(formatted_values) + "\n"
-
-#     _update_file(filepath, header, new_line, step)
-
-#     if state.config.io.chatter and step == 0:
-#         print("Time evolution file initialized.")
-
 def write_time_evolution(state):
     """
     Append time-evolution data to time_evolution.txt.
@@ -631,6 +490,8 @@ def write_time_evolution(state):
             (f"r90[{name}]", radii[6]),
             (f"r50evo[{name}]", r50evo[k]),
             (f"m_c[{name}]", m_ck),
+            (f"q_res_inner[{name}]", state.q_res[k, 0]),
+            (f"q_res_outer[{name}]", state.q_res[k, 1]),
         ])
 
     # --- Build header
