@@ -17,9 +17,18 @@ def remap_if_needed(r, rho, p, m):
     for k in range(s):
         if r[k, 0] <= 0.0:
             continue  # No logarithmic remap of an origin-containing grid.
-        if np.max(r[k, 1:] / r[k, :-1]) <= 1.3:
-            continue
+        ratios = r[k, 1:] / r[k, :-1]
 
+        target_ratio = (
+            r[k, -1] / r[k, 0]
+        ) ** (1.0 / (Np1 - 1))
+
+        if (
+            np.max(ratios) <= 1.3
+            and np.min(ratios) >= np.sqrt(target_ratio)
+        ):
+            continue
+        
         rn = np.geomspace(r[k, 0], r[k, -1], Np1)
         dm = np.diff(m[k])
         U = np.empty(Np1, dtype=np.float64)

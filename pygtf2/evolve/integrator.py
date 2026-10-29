@@ -295,7 +295,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         dq_res_trial[:, :]  = 0.0
 
         if not np.isfinite(dt_trial) or dt_trial <= 0.0 or state.t + dt_trial == state.t:
-            failure = 'timestep cannot advance time'
+            failure = f'{failure}; timestep cannot advance time'
             break
 
         # IMEX METHOD
