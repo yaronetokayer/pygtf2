@@ -23,8 +23,6 @@ class SimParams:
         Include binary heating in simulation
     n_particle: int
         Absolute particle number for binary heat generation
-    conduct_imex : bool
-        Use IMEX conduction scheme instead of explicit scheme
     bkg : dict or None
         Background configuration with exactly the keys prof, mass, length,
         and other. None disables the background. For prof='hernq_static',
@@ -47,7 +45,6 @@ class SimParams:
             evap : bool = False,
             binaries : bool = False,
             n_particle : int = 1e4,
-            conduct_imex : bool = True,
             bkg: dict | None = None,
     ):
         
@@ -60,7 +57,6 @@ class SimParams:
         self._evap = None
         self._binaries = None
         self._n_particle = None
-        self._conduct_imex = None
         self._bkg = dict(self.DEFAULT_BKG)
 
         self.t_halt = t_halt
@@ -72,7 +68,6 @@ class SimParams:
         self.evap = evap
         self.binaries = binaries
         self._n_particle = int(n_particle)
-        self._conduct_imex = conduct_imex
         if bkg is not None:
             self.bkg = bkg
 
@@ -165,16 +160,6 @@ class SimParams:
         if value <= 0:
             raise ValueError("n_particle must be positive")
         self._n_particle = int(value)
-
-    @property
-    def conduct_imex(self):
-        return self._conduct_imex
-
-    @conduct_imex.setter
-    def conduct_imex(self, value):
-        if not isinstance(value, (bool, int)) or (isinstance(value, int) and value not in (0, 1)):
-            raise ValueError("conduct_imex must be a bool (True/False) or int (0/1)")
-        self._conduct_imex = bool(value)
 
     @property
     def bkg(self):

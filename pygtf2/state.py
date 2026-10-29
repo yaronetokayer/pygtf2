@@ -604,7 +604,6 @@ class State:
         i = 0
         while True:
             i += 1
-            # status, dr_max_new, he_res = revirialize_interp_gs_diagnostics(r_new, rho_new, p_new, m, bkg_param)
             status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(
                 r_new, rho_new, p_new, m, bkg_param,
                 a, b, c, y, xk, vol_old, K_all, m_tot_all,
