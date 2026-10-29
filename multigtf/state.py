@@ -136,98 +136,31 @@ class State:
         return state
 
     @classmethod
-    def from_dir(cls, model_dir: str, snapshot: None | int = None):
+    def from_dir(cls, model_dir: str, snapshot: int | None = None):
+        """Reserved interface for restarting a saved simulation.
+
+        Parameters
+        ----------
+        model_dir : str
+            Directory containing saved simulation output.
+        snapshot : int or None, optional
+            Reserved snapshot selector; no snapshot is loaded.
+
+        Raises
+        ------
+        NotImplementedError
+            Always. Reconstructing an evolving State from disk is not supported.
+
+        Notes
+        -----
+        Use multigtf.io.read.load_snapshot_bundle to inspect saved arrays.
+        Config.from_dict reconstructs configuration only; neither operation
+        resumes an evolved simulation.
         """
-        Reserved interface for restoring a State from saved output.
-
-        Currently always raises RuntimeError because restart support is still
-        in development. Use multigtf.io.read.load_snapshot_bundle to inspect saved
-        arrays and Config.from_dict(import_metadata(...)) to recover parameters;
-        neither resumes integration.
-        """
-        raise RuntimeError("this module is still in development")
-        # --- basic checks
-        p = Path(model_dir)
-        if not p.is_dir():
-            raise FileNotFoundError(f"Model directory does not exist: {p}")
-        
-        # --- imports
-        from multigtf.io.read import import_metadata, load_snapshot_bundle
-        from multigtf.config import Config
-        from multigtf.util.calc import calc_rho_v2_r_c, calc_r50_spread
-
-        # --- metadata + snapshot
-        meta = import_metadata(p)
-        snap = load_snapshot_bundle(p, snapshot=snapshot)
-
-        # --- construct config and state
-        config = Config.from_dict(meta)
-        if config.io.chatter:
-            print("Set config from metadata.")
-
-        state = cls(config)
-        if config.io.chatter:
-            print("Setting state variables from snapshot...") 
-
-        # species ordering: use config.spec keys (in insertion order)
-        labels = list(config.spec.keys())
-        s = len(labels)
-        N = snap['log_rmid'].size
-        Np1 = N + 1
-
-        # ===== Per-species fields =====
-        # Allocate per-species arrays
-        state.r      = np.zeros((s, Np1), dtype=np.float64)
-        state.m      = np.zeros((s, Np1), dtype=np.float64)
-        state.rho    = np.zeros((s, N),   dtype=np.float64)
-        state.v2     = np.zeros((s, N),   dtype=np.float64)
-        state.trelax = np.zeros((s, N),   dtype=np.float64)
-        state.u      = np.zeros((s, N),   dtype=np.float64)
-
-        species_block = snap['species']   # dict: name -> dict of arrays
-
-        # For each species name in the config, pull data from snapshot
-        for k, name in enumerate(labels):
-            if name not in species_block:
-                raise KeyError(f"Species '{name}' in config not found in snapshot file.")
-            sd = species_block[name]
-            # m and r given at outer edges (length N); prepend 0.0
-            r_edges = np.empty(Np1, dtype=np.float64)
-            r_edges[0]  = 0.0
-            r_edges[1:] = 10**sd['lgr'].astype(np.float64)
-            m_edges = np.empty(Np1, dtype=np.float64)
-            m_edges[0]  = 0.0
-            m_edges[1:] = sd['m'].astype(np.float64)
-            state.r[k]      = r_edges
-            state.m[k]      = m_edges
-            state.rho[k]    = sd['rho'].astype(np.float64)
-            state.v2[k]     = sd['v2'].astype(np.float64)
-            state.trelax[k] = sd['trelax'].astype(np.float64)
-        state.rmid = 0.5 * (state.r[:,1:] + state.r[:, :-1])
-
-        # ===== Time + bookkeeping =====
-        state.t             = float(snap['time'])
-        state.step_count    = int(snap['step_count'])
-        state.snapshot_index= int(snap['snapshot_index'])
-
-        # thresholds / proposed dt
-        prec         = config.prec
-        state.dt     = float(prec.eps_dt)
-
-        # quick diagnostics (global)
-        state.mintrelax                     = float(np.min(state.trelax))
-        state.rho_c, state.v2_c, state.r_c  = calc_rho_v2_r_c(state.rmid, state.rho, state.v2)
-        state.r50_spread                    = calc_r50_spread(state.r, state.m)
-
-        # running diagnostics
-        state.dt_cum = 0.0
-        state.du_max_cum = 0.0
-        state.dt_over_trelax_cum = 0.0
-
-        if config.io.chatter:
-            print("State loaded.")
-
-        return state
+        raise NotImplementedError(
+            'State.from_dir is not implemented. Use the readers in '
+            'multigtf.io.read to inspect saved output.'
+        )
 
     def _set_species_hierarchy(self):
         """
