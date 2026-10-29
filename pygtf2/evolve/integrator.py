@@ -83,15 +83,15 @@ def run_until_stop(state, start_step, **kwargs):
     ### Main loop ###
     #################
 
+    stop_reason = None
     while state.t < t_halt:
 
         ###########################
         ### 1. Integrate system ###
         ###########################
 
-        # Increment counter
-        state.step_count += 1
-        step_count = state.step_count
+        # Proposed next step; only commit after successful integration
+        step_count = state.step_count + 1
 
         # Compute proposed dt
         if step_count == 1:
@@ -113,6 +113,9 @@ def run_until_stop(state, start_step, **kwargs):
                             work_nin1, work_nin2, work_nin3, work_nin4, work_nin5,
                             )
 
+        # Accept the completed timestep
+        state.step_count = step_count
+
         if step_count % nupdate == 0:
             print(f"Completed step {step_count}", end='\r', flush=True)
 
@@ -124,14 +127,12 @@ def run_until_stop(state, start_step, **kwargs):
         ###########################
 
         # Hardcoded criteria
-        if rho0 > rho0_halt:
-            if step_count > 1e3:
-                if chatter:
-                    print("Simulation halted: central density exceeds halting value")
-                break
+        if rho0 > rho0_halt and step_count > 1e3:
+            stop_reason = 'central density exceeds halting value'
+            break
+
         if np.isnan(rho0):
-            if chatter:
-                print("Simulation halted: central density is nan")
+            stop_reason = 'central density is nan'
             break
 
         # User halting criteria
@@ -140,8 +141,7 @@ def run_until_stop(state, start_step, **kwargs):
             or (time_limit is not None and state.t - time_i >= time_limit)
             or (rho0_limit is not None and rho0 >= rho0_limit)
         ):
-            if chatter:
-                print("Simulation halted: user stopping condition reached")
+            stop_reason = 'user stopping condition reached'
             break
 
         #########################
@@ -179,9 +179,11 @@ def run_until_stop(state, start_step, **kwargs):
         if step_count % nlog == 0:
             write_log_entry(state, start_step)
 
-    if state.t >= t_halt:
-        if chatter:
-            print("Simulation halted: max time exceeded")
+    if stop_reason is None:
+        stop_reason = 'max time exceeded'
+
+    if chatter:
+        print(f"Simulation halted: {stop_reason}")
 
 def integrate_time_step(state, dt_prop, step_count,                 # State
                         binaries, # evap                            # Switches
