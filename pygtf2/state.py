@@ -616,7 +616,6 @@ class State:
         vol_old     = np.empty(Np1 - 1,     dtype=np.float64)
         K_all       = np.empty((s, Np1),    dtype=np.float64)
         m_tot_all   = np.empty((s, Np1),    dtype=np.float64)
-        dummy       = np.empty((s, 2),      dtype=np.float64)
 
         eps_dr = 1e-10
         i = 0
@@ -625,7 +624,7 @@ class State:
             status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(
                 r_new, rho_new, p_new, m, m_bh, bkg_param,
                 a, b, c, y, xk, vol_old, K_all, m_tot_all,
-                ZERO_LUMINOSITY, dummy,
+                ZERO_LUMINOSITY,
                 )
             
             if status == STATUS_SHELL_CROSSING:

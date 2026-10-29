@@ -26,6 +26,9 @@ class SimParams:
     thermal_boundary : str
         Conductivity boundary condition at inner and outer edges.
         Options are ['zero_luminosity', 'fixed_temperature'].
+    tau_boundary : tuple
+        Thermal coupling of heat reservoirs with boundary cells.
+        Used for fixed temperature thermal boundary
     evap : bool
         Reserved evaporation switch; the current integrator does not apply it.
     binaries : bool
@@ -53,6 +56,7 @@ class SimParams:
             b                   : float = 0.44,
             m_bh                : float = 0.0,
             thermal_boundary    : str   = 'zero_luminosity',
+            tau_boundary        : tuple | None = None,
             evap                : bool  = False,
             binaries            : bool  = False,
             n_particle          : int   = 1e4,
@@ -67,6 +71,7 @@ class SimParams:
         self._b = None
         self._m_bh = None
         self._thermal_boundary = None
+        self._tau_boundary = None
         self._evap = None
         self._binaries = None
         self._n_particle = None
@@ -80,6 +85,7 @@ class SimParams:
         self.b = b
         self.m_bh = m_bh
         self.thermal_boundary = thermal_boundary
+        self.tau_boundary = tau_boundary
         self.evap = evap
         self.binaries = binaries
         self._n_particle = int(n_particle)
@@ -166,6 +172,26 @@ class SimParams:
         if value not in THERMAL_BOUNDARY_STRINGS:
             raise ValueError(f"thermal_boundary options are {THERMAL_BOUNDARY_STRINGS}")
         self._thermal_boundary = value
+
+    @property
+    def tau_boundary(self):
+        return self._tau_boundary
+
+    @tau_boundary.setter
+    def tau_boundary(self, value):
+        if value is None:
+            self._tau_boundary = None
+            return
+
+        values = tuple(float(x) for x in value)
+
+        if len(values) != 2:
+            raise ValueError("tau_boundary must contain inner and outer times")
+
+        if any(not math.isfinite(x) or x <= 0.0 for x in values):
+            raise ValueError("tau_boundary values must be finite and positive")
+
+        self._tau_boundary = values
 
     @property
     def evap(self):

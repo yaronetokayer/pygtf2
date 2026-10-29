@@ -44,8 +44,13 @@ def run_until_stop(state, start_step, **kwargs):
     eps_du = float(prec.eps_du); max_iter_du = prec.max_iter_du
     if sim.thermal_boundary == 'zero_luminosity':
         thermal_boundary = ZERO_LUMINOSITY
+        tau_boundary = np.ones(2, dtype=np.float64)  # Unused
     elif sim.thermal_boundary == 'fixed_temperature':
         thermal_boundary = FIXED_TEMPERATURE
+        if sim.tau_boundary is None:
+            raise ValueError("fixed_temperature requires sim.tau_boundary")
+        tau_boundary  = np.asarray(sim.tau_boundary, dtype=np.float64)
+        
     mrat = state.mrat; lnL = char.lnL
     bkg_param = state.bkg_param
 
@@ -115,7 +120,7 @@ def run_until_stop(state, start_step, **kwargs):
             state, dt_prop, step_count,
             binaries, # evap,                                               # Switches
             eps_du, max_iter_du, c1, c2, mrat, lnL, bkg_param, n_particle,  # Parameters
-            thermal_boundary,
+            thermal_boundary, tau_boundary,
             work_sn1, work_sn2,                                             # Preallocated arrays
             work_snout1, work_snout2,
             work_n1, work_n2, work_n3, work_n4,
@@ -203,7 +208,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
                         binaries, # evap                            # Switches
                         eps_du, max_iter_du,
                         c1, c2, mrat, lnL, bkg_param, n_particle,   # Parameters
-                        thermal_boundary,
+                        thermal_boundary, tau_boundary,
                         work_sn1, work_sn2,                         # Preallocated arrays
                         work_snout1, work_snout2,
                         work_n1, work_n2, work_n3, work_n4,
@@ -235,6 +240,9 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         Background potential parameters.
     thermal_boundary : int
         Option for thermal boundary condition in conduction solve
+    tau_boundary : tuple
+        Coupling between bounary cells and heat reservoir
+        Used for thermal_boundary = FIXED_TEMPERATURE
     n_particle : int
         Absolute particle number for heat generation due to binaries.
     work_sn1, work_sn2 : ndarray (s,N)
@@ -277,7 +285,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         order = STRANG_SPLIT
         conduct_imex_once(
             v2, rho, r, m, m_bh,
-            thermal_boundary, v2_bdy, dq_res_trial,
+            thermal_boundary, v2_bdy, dq_res_trial, tau_boundary,
             c1, c2, mrat, lnL,
             work_sn1, work_n1, work_n2, work_n3, work_n4,
             dt_trial, order,
@@ -285,10 +293,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
 
         # Other energy modules can be added here
         if binaries:
-            binary_heating(
-                rho, v2, r, dt_trial, mrat, n_particle, 
-                thermal_boundary, m, v2_bdy, dq_res_trial,
-            )
+            binary_heating(rho, v2, r, dt_trial, mrat, n_particle)
 
         du_max = max_frac_change(v2, work_sn2)
 
@@ -316,8 +321,7 @@ def integrate_time_step(state, dt_prop, step_count,                 # State
         r, rho, work_sn1, m, m_bh, bkg_param,
         work_nin1, work_nin2, work_nin3, work_nin4, work_nin5, 
         work_n1, work_snout2, work_snout1,
-        thermal_boundary, v2_bdy,
-        dq_res_trial,
+        thermal_boundary
         ) # Modifies r, rho, p in place
 
     if status == STATUS_SHELL_CROSSING:

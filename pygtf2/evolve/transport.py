@@ -3,7 +3,7 @@ from numba import njit, float64, types, void
 import math
 from pygtf2.util.interpolate import interp_linear_to_interfaces, interp_m_enc
 from pygtf2.util.calc import solve_tridiagonal_thomas
-from pygtf2.util.fixed_temp import adjust_tridiag_system_fixed_temp, accumulate_reservoir_heat, restore_boundary_v2
+from pygtf2.util.fixed_temp import adjust_tridiag_system_fixed_temp, accumulate_reservoir_heat
 
 HEX_FIRST       = 0
 COND_FIRST      = 1
@@ -300,6 +300,7 @@ def _build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
         float64[:, :], 
         float64[:, :], 
         float64[:], 
+        float64[:],
         float64[:], 
         float64[:], 
         float64[:], 
@@ -311,7 +312,7 @@ def _build_tridiag_system(a, b, c, d, rk, mk, rhok_int, uk, pref, dt):
     cache=True, fastmath=True
 )
 def _conduct_implicit(v2, rho, r, m, m_bh,
-                     thermal_boundary, v2_bdy, dq_res_trial,
+                     thermal_boundary, v2_bdy, dq_res_trial, tau_boundary,
                      a, b, c, d, 
                      c2, mrat, lnL, du_trial, dt,):
     """
@@ -350,7 +351,7 @@ def _conduct_implicit(v2, rho, r, m, m_bh,
         # build_tridiag_system uses a zero-luminosity BC
         # for fixed termperature, we need to correct
         if thermal_boundary == FIXED_TEMPERATURE:
-            adjust_tridiag_system_fixed_temp(a, b, c, d, v2_bdy, uk, k, N)
+            adjust_tridiag_system_fixed_temp(a, b, c, d, rk, mk, rhok_int, uk, v2_bdy, tau_boundary, pref, dt, k, N,)
 
         solve_tridiagonal_thomas(a, b, c, d, du_trial[k])
 
@@ -371,6 +372,7 @@ def _conduct_implicit(v2, rho, r, m, m_bh,
         types.int64,    # thermal_boundary
         float64[:, :],  # v2_bdy
         float64[:, :],  # dq_res_trial
+        float64[:],     # tau_boundary
         float64,        # c1
         float64,        # c2
         float64[:],     # mrat
@@ -387,7 +389,7 @@ def _conduct_implicit(v2, rho, r, m, m_bh,
 )
 def conduct_imex_once(
     v2, rho, r, m, m_bh,
-    thermal_boundary, v2_bdy, dq_res_trial,
+    thermal_boundary, v2_bdy, dq_res_trial, tau_boundary,
     c1, c2, mrat, lnL,
     v2_work, a_work, b_work, c_work, d_work,
     dt, order,
@@ -402,36 +404,28 @@ def conduct_imex_once(
     """
     if order == HEX_FIRST:
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
-        if thermal_boundary == FIXED_TEMPERATURE:
-            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
         _conduct_implicit(v2, rho, r, m, m_bh, 
-                         thermal_boundary, v2_bdy, dq_res_trial, 
+                         thermal_boundary, v2_bdy, dq_res_trial, tau_boundary,
                          a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
 
     elif order == COND_FIRST:
         _conduct_implicit(v2, rho, r, m, m_bh, 
-                         thermal_boundary, v2_bdy, dq_res_trial,
+                         thermal_boundary, v2_bdy, dq_res_trial, tau_boundary,
                          a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt)
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, dt, c1,)
-        if thermal_boundary == FIXED_TEMPERATURE:
-            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
 
     elif order == STRANG_SPLIT:
         half_dt = 0.5 * dt
 
         # First half-step hex on initial state determines dt_eff
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
-        if thermal_boundary == FIXED_TEMPERATURE:
-            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
 
         _conduct_implicit(v2, rho, r, m, m_bh, 
-                         thermal_boundary, v2_bdy, dq_res_trial,
+                         thermal_boundary, v2_bdy, dq_res_trial, tau_boundary,
                          a_work, b_work, c_work, d_work, c2, mrat, lnL, v2_work, dt,)
 
         # Recompute the second half-step on the updated state.
         _hex_explicit(v2, rho, lnL, mrat, r, v2_work, half_dt, c1,)
-        if thermal_boundary == FIXED_TEMPERATURE:
-            restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
 
     else:
         raise ValueError("unrecognized order code in conduction step")

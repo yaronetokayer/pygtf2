@@ -32,20 +32,63 @@ def _linearized_interface_luminosity(coef, pref, uL, uR, duL, duR,):
         - common_m * duR
     )
 
-@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:,:], float64[:], types.int64, types.int64), cache=True, fastmath=True)
-def adjust_tridiag_system_fixed_temp(a, b, c, d, v2_bdy, uk, k, N):
+@njit(
+    void(
+        float64[:],     # a
+        float64[:],     # b
+        float64[:],     # c
+        float64[:],     # d
+        float64[:],     # rk
+        float64[:],     # mk
+        float64[:],     # rhok_int
+        float64[:],     # uk
+        float64[:, :],  # v2_bdy
+        float64[:],     # tau_bdy
+        float64,        # pref
+        float64,        # dt
+        types.int64,    # k
+        types.int64,    # N
+    ),
+    cache=True,
+    fastmath=True,
+)
+def adjust_tridiag_system_fixed_temp(
+    a, b, c, d,
+    rk, mk, rhok_int, uk,
+    v2_bdy, tau_boundary,
+    pref, dt, k, N,
+):
     """
-    Adjust the tridiagonal system for fixed-temperature boundary conditions.
-    """
-    a[0] = 0.0
-    b[0] = 1.0
-    c[0] = 0.0
-    d[0] = 1.5 * v2_bdy[k, 0] - uk[0]
+    Add finite-time coupling to fixed-temperature reservoirs.
 
-    a[N - 1] = 0.0
-    b[N - 1] = 1.0
-    c[N - 1] = 0.0
-    d[N - 1] = 1.5 * v2_bdy[k, 1] - uk[N - 1]
+    The first and last stellar cells exchange heat with reservoirs
+    whose target v2 values are fixed. The stellar-cell temperatures
+    themselves are not fixed.
+    """
+    for side in range(2):
+        cell = 0 if side == 0 else N - 1
+        i = 1 if side == 0 else N - 1
+
+        # Conductive coefficient at the neighboring interior interface.
+        drc = 0.5 * (rk[i + 1] - rk[i - 1])
+        coef = rhok_int[i - 1] * rk[i] * rk[i] / drc
+
+        # Restore the endpoint row to shell-energy-balance units.
+        scale = -math.sqrt(2.0) * pref * dt * coef
+
+        a[cell] *= scale
+        b[cell] *= scale
+        c[cell] *= scale
+        d[cell] *= scale
+
+        # Add the implicit reservoir contribution.
+        dm = mk[cell + 1] - mk[cell]
+        term = dm * dt / tau_boundary[side]
+
+        b[cell] += term
+        d[cell] += term * (
+            1.5 * v2_bdy[k, side] - uk[cell]
+        )
 
 @njit(void(float64[:, :], float64[:], float64[:], float64[:], float64[:], float64[:, :], float64, float64, types.int64, types.int64), cache=True, fastmath=True)
 def accumulate_reservoir_heat(dq_res_trial, rk, mk, rhok_int, uk, du_trial, pref, dt, k, N):

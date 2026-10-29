@@ -4,15 +4,14 @@ from numba import njit, float64, types, void, int64
 from pygtf2.evolve.transport import ZERO_LUMINOSITY, FIXED_TEMPERATURE
 from pygtf2.util.interpolate import interp_m_enc, interp_m_enc_and_K
 from pygtf2.util.calc import add_bkg_pot, add_m_bh, solve_tridiagonal_thomas, add_bkg_K
-from pygtf2.util.fixed_temp import add_pdv_to_reservoir
 
 STATUS_OK = 0
 STATUS_SHELL_CROSSING = 1
 STATUS_CAVITY_REACHED = 2
 _TINY64 = np.finfo(np.float64).tiny
 
-@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], types.int64, float64[:]), cache=True, fastmath=True)
-def _update_r_p_rho(r, x, p, rho, work, thermal_boundary, v2_bdyk):
+@njit(void(float64[:], float64[:], float64[:], float64[:], float64[:]), cache=True, fastmath=True)
+def _update_r_p_rho(r, x, p, rho, work):
     """
     Update interior radii, then density and pressure from shell-volume ratios.
     Pressure follows an adiabatic exponent of 5/3; v2 is not an argument.
@@ -31,11 +30,6 @@ def _update_r_p_rho(r, x, p, rho, work, thermal_boundary, v2_bdyk):
         Shell-centered densities. Updated in place.
     work : ndarray, shape (N,)
         Scratch array used to store old shell volumes.
-    thermal_boundary : int
-        Specifies thermal boundary condition.
-        For the FIXED_TEMPERATURE case, we need to account for pressure response of reservoir
-    v2_bdy : ndarray, shape (s, 2)
-        Boundary fixed temperature values
     """
     tiny = _TINY64
     gamma = 5.0 / 3.0
@@ -63,15 +57,7 @@ def _update_r_p_rho(r, x, p, rho, work, thermal_boundary, v2_bdyk):
         ratio = work[j] / V_new
 
         rho[j] *= ratio
-
-        if thermal_boundary == FIXED_TEMPERATURE and j == 0:
-            p[j] = rho[j] * v2_bdyk[0]
-
-        elif thermal_boundary == FIXED_TEMPERATURE and j == n - 1:
-            p[j] = rho[j] * v2_bdyk[1]
-
-        else:
-            p[j] *= ratio ** gamma
+        p[j] *= ratio ** gamma
 
 @njit(void(float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], float64[:], types.int64), cache=True, fastmath=True)
 def _build_tridiag_system_mother(r, rho, p, m_tot, K_k, a, b, c, y, thermal_boundary):
@@ -298,16 +284,13 @@ def compute_he_pressures_with_resid(r, rho, p, m, m_bh, bkg_param):
         float64[:, :], # K_all
         float64[:, :], # m_tot_all
         types.int64,   # thermal_boundary
-        float64[:, :], # v2_bdy
-        float64[:, :], # dq_res_trial
     ), 
     cache=True, fastmath=True,
 )
 def revirialize_interp_jacobi(
     r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
-    thermal_boundary, v2_bdy,
-    dq_res_trial,
+    thermal_boundary,
     ) -> int:
     """
     Multi-species re-virialization, Jacobi-style in the inter-species coupling.
@@ -339,10 +322,6 @@ def revirialize_interp_jacobi(
         Scratch arrays for other-mass derivatives and total enclosed masses.
     thermal_boundary : int
         Specifies conduction boundary condition.
-    v2_bdy : ndarray, shape (s, 2)
-        Fixed temperatures at the boundaries
-    dq_res_trial : ndarray, shape (s, 2)
-        Reservoir heat tracker
 
     Returns
     -------
@@ -383,14 +362,11 @@ def revirialize_interp_jacobi(
 
     # Pass 3: commit updates and check for shell crossing
     for k in range(s):
-        _update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old, thermal_boundary, v2_bdy[k])
+        _update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old)
 
         for i in range(1, Np1 - 1):
             if r[k, i + 1] - r[k, i] <= 0.0:
                 return STATUS_SHELL_CROSSING
-
-        if thermal_boundary == FIXED_TEMPERATURE: # Account for pdv work on reservoir
-            add_pdv_to_reservoir(r, m, v2_bdy, vol_old, dq_res_trial, k, Np1 - 1)
 
     return STATUS_OK
 
@@ -411,14 +387,13 @@ def revirialize_interp_jacobi(
         float64[:, :], # K_all
         float64[:, :], # m_tot_all
         types.int64,   # thermal_boundary
-        float64[:, :], # v2_bdy
     ), 
     cache=True, fastmath=True
 )
 def revirialize_interp_jacobi_diagnostics(
     r, rho, p, m, m_bh, bkg_param,
     a, b, c, y, xk, vol_old, K_all, m_tot_all,
-    thermal_boundary, v2_bdy,
+    thermal_boundary, 
     ) -> tuple:
     """
     Apply Jacobi-style multi-species revirialization and return diagnostics.
@@ -452,8 +427,6 @@ def revirialize_interp_jacobi_diagnostics(
         Specifies conduction boundary condition.
         Since this routine is only used for initialization,
         this should always be passed as ZERO_LUMINOSITY
-    v2_bdy : ndarray, shape (s, 2)
-        Fixed temperatures at the boundaries
 
     Returns
     -------
@@ -508,7 +481,7 @@ def revirialize_interp_jacobi_diagnostics(
 
     # Pass 3: commit updates and check for shell crossing
     for k in range(s):
-        _update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old, thermal_boundary, v2_bdy[k])
+        _update_r_p_rho(r[k], xk_all[k], p[k], rho[k], vol_old)
 
         for i in range(Np1 - 1):
             if r[k, i + 1] - r[k, i] <= 0.0:

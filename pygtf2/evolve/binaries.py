@@ -1,7 +1,5 @@
 import numpy as np
 from numba import njit, float64, int64, types
-from pygtf2.evolve.transport import ZERO_LUMINOSITY, FIXED_TEMPERATURE
-from pygtf2.util.fixed_temp import restore_boundary_v2
 
 @njit(
     types.void(
@@ -11,10 +9,6 @@ from pygtf2.util.fixed_temp import restore_boundary_v2
         float64,         # dt
         float64[:],      # m_part
         int64,           # n_particles
-        int64,           # thermal_boundary
-        float64[:, :],   # m
-        float64[:, :],   # v2_bdy
-        float64[:, :],   # dq_res_trial
     ),
     cache=True,
     fastmath=True,
@@ -26,10 +20,6 @@ def binary_heating(
     dt: float,
     m_part: np.ndarray,
     n_particles: int,
-    thermal_boundary : int,
-    m: np.ndarray, 
-    v2_bdy : np.ndarray, 
-    dq_res_trial : np.ndarray, 
 ) -> None:
     """
     Apply heating from three-body binary formation using the
@@ -63,14 +53,6 @@ def binary_heating(
         Relative particle masses m_k / m_1, with shape (n_species,).
     n_particles : int
         Total number of particles represented by the system.
-    thermal_boundary : int
-        Option for thermal boundary condition
-    m : ndarray
-        Species edge enclose mass profile, needed for thermal_boundary == FIXED_TEMPERATURE
-    v2_bdy : ndarray
-        Boundary fixed temperatures, needed for thermal_boundary == FIXED_TEMPERATURE
-    dq_res_trial : ndarray
-        Tracks thermal reservoir, needed for thermal_boundary == FIXED_TEMPERATURE
 
     Returns
     -------
@@ -392,6 +374,3 @@ def binary_heating(
             du_dt = heat_rate_shell[k, j] / mass_shell
 
             v2[k, j] += (2.0 / 3.0) * dt * du_dt
-
-    if thermal_boundary == FIXED_TEMPERATURE:
-        restore_boundary_v2(v2, m, v2_bdy, dq_res_trial,)
