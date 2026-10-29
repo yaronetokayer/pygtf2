@@ -618,20 +618,6 @@ class State:
             if i >= 100:
                 raise RuntimeError("Failed to achieve hydrostatic equilibrium in 100 iterations")
 
-        # DEBUGGING
-        # from pygtf2.dev.debug import plot_r_markers
-        # reference = float(r_new[0,1])
-        # for i in range(10000):
-        #     status, dr_max_new, he_res = revirialize_interp_jacobi_diagnostics(r_new, rho_new, p_new, m, bkg_param)
-        #     print(compute_he_resid_norm(r_new, rho_new, p_new, m, bkg_param))
-            # compute_he_pressures(r_new, rho_new, p_new, m, bkg_param)
-            # if abs(r_new[0,1])/reference - 1.0 > 1e-2:
-            #     print(r_new[0,1], abs(r_new[0,1])/reference - 1.0)
-            #     print(r_new[:,1:3])
-            #     print(i)
-            #     break
-        ### END
-
         v2_new = p_new / rho_new
 
         self.r = r_new

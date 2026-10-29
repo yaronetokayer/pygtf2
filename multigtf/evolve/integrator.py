@@ -7,7 +7,6 @@ from pygtf2.evolve.binaries import binary_heating
 from pygtf2.util.interpolate import sum_intensive_loglog_single
 from pygtf2.util.calc import calc_r50_spread
 from pygtf2.util.little_helpers import max_frac_change
-from pygtf2.dev.debug import plot_r_markers
 
 def run_until_stop(state, start_step, **kwargs):
     """
